@@ -827,12 +827,12 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
 
 =head1 SYNOPSIS
 
-    # all examples use options from config file
+    # recommended usage (all modes can use options from config file or command line or mixed)
 	# run Phylostrat in parallel
     StratiphyParallel.pm --mode=stratiphy_parallel
 
     # collect phylo summary maps
-    StratiphyParallel.pm --mode=collect_maps
+    StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
 
 
 
@@ -866,7 +866,7 @@ Runs Phylostrat in parallel with fork (defined by --max_process). It requires na
 =item collect_maps
 
  # options from command line
- StratiphyParallel.pm --mode=collect_maps --in=./data/ --outfile=./data/ci_maps_04_02_2016.xlsx -v -v
+ StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
 
  # options from config
  StratiphyParallel.pm --mode=collect_maps
@@ -883,10 +883,10 @@ Example:
  [General]
  nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
  names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
- in          = ./data/
+ in          = /home/msestak/prepare_blast/out/dr_plus/
  #out         = .
  infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
- outfile     = ./data/ci_maps_04_02_2016.xlsx
+ outfile     = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
  max_process = 12
  e_value     = 3-30
  tax_id      = 7227

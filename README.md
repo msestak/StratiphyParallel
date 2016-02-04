@@ -4,14 +4,20 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
 
 # SYNOPSIS
 
-    StratiphyParallel.pm /home/msestak/prepare_blast/out/mm_plus/mm_all_plus_16_12_2015
+    # recommended usage (all modes can use options from config file or command line or mixed)
+        # run Phylostrat in parallel
+    StratiphyParallel.pm --mode=stratiphy_parallel
+
+    # collect phylo summary maps
+    StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
 
 # DESCRIPTION
 
 StratiphyParallel is modulino to run PhyloStrat in parallel, collect information from maps and run multiple log-odds analyses on them.
 
-    --mode=mode                Description
-    --mode=stratiphy_parallel     installs MySQL::Sandbox and prompts for modification of .bashrc
+    --mode=mode                   Description
+    --mode=stratiphy_parallel     - runs Phylostrat in parallel with fork
+    --mode=collect_maps           - collects phylo summary maps
     
     For help write:
     StratiphyParallel.pm -h
@@ -29,6 +35,16 @@ StratiphyParallel is modulino to run PhyloStrat in parallel, collect information
 
     Runs Phylostrat in parallel with fork (defined by --max\_process). It requires names (--names), nodes (--nodes) and blast output (--infile) files. It also needs tax\_id (--tax\_id) of species and range of BLAST e-values (--e\_values) for which to run Phylostrat.
 
+- collect\_maps
+
+        # options from command line
+        StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
+
+        # options from config
+        StratiphyParallel.pm --mode=collect_maps
+
+    Collects phylo summary maps, compares them and writes them to Excel file.
+
 # CONFIGURATION
 
 All configuration in set in stratiphyparallel.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows [Config::Std](https://metacpan.org/pod/Config::Std) format and rules.
@@ -37,10 +53,10 @@ Example:
     [General]
     nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
     names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
-    #in          = 
+    in          = /home/msestak/prepare_blast/out/dr_plus/
     #out         = .
     infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
-    #outfile     = 
+    outfile     = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
     max_process = 12
     e_value     = 3-30
     tax_id      = 7227

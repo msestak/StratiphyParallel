@@ -1,10 +1,10 @@
 [General]
 nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
 names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
-in          = ./data/
+in          = /home/msestak/prepare_blast/out/dr_plus/
 #out         = .
 infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
-outfile     = ./data/ci_maps_04_02_2016.xlsx
+outfile     = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
 max_process = 12
 e_value     = 3-30
 tax_id      = 7227
