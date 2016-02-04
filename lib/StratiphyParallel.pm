@@ -786,28 +786,25 @@ sub _add_missing_phylostrata {
 	my @new_phylostrata;           #returning phylostrata
 	my @empty_index;               #returning indices
 
-    if (@$test_ref == @$yref) {
-		die "they match in length";
-	}
-	else {
-		my $i = 0;                 #iterator (and index)
-		for my $e (@$test_ref) {
-			if ($e eq $yref->[$i]) {
-				push @new_phylostrata, $yref->[$i];
-				#say "NEW_ph:@new_phylostrata";
-			}
-			else {
-				push @new_phylostrata, $e;
-				#say "NEW_ph_add:@new_phylostrata";
-				push @empty_index, $i;
-				#say "INDEX:@empty_index";
-				$i--;             #because of mismatch between indices
-			}
-			$i++;
+	my $i = 0;                 #iterator (and index)
+	for my $e (@$test_ref) {
+		if ($e eq $yref->[$i]) {
+			push @new_phylostrata, $yref->[$i];
+			#say "NEW_ph:@new_phylostrata";
 		}
+		else {
+			push @new_phylostrata, $e;
+			#say "NEW_ph_add:@new_phylostrata";
+			push @empty_index, $i;
+			#say "INDEX:@empty_index";
+			$i--;             #because of mismatch between indices
+		}
+		$i++;
 	}
+
     return \@new_phylostrata, \@empty_index;
 }
+
 
 
 
