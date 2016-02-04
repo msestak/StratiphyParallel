@@ -20,6 +20,7 @@ requires 'Log::Log4perl';
 requires 'File::Find::Rule';
 requires 'Parallel::ForkManager';
 requires 'Config::Std';
+requires 'Excel::Writer::XLSX';
 
 author_requires 'Term::ReadKey';
 author_requires 'Regexp::Debugger';
