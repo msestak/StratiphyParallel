@@ -1,8 +1,13 @@
 [General]
-sandbox  = /home/msestak/sandboxes
-opt      = /home/msestak/opt/mysql
-out      = /msestak/gitdir/MySQLinstall
-infile   = /home/msestak/mysql-5.6.27-linux-glibc2.5-x86_64.tar.gz
+nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
+names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
+#in          = 
+#out         = .
+infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
+#outfile     = 
+max_process = 12
+e_value     = 3-30
+tax_id      = 7227
 
 [Database]
 host     = localhost

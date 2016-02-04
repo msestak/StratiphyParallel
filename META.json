@@ -1,5 +1,5 @@
 {
-   "abstract" : "It's barebones modulino to build custom scripts. Useful snipets go here.",
+   "abstract" : "It's modulino to run PhyloStrat in parallel, collect information from maps and run multiple log-odds analyses on them.",
    "author" : [
       "Martin Sebastijan Šestak"
    ],
@@ -46,6 +46,7 @@
          "requires" : {
             "Capture::Tiny" : "0",
             "Carp" : "0",
+            "Config::Std" : "0",
             "DBD::mysql" : "0",
             "DBI" : "0",
             "Data::Dumper" : "0",
@@ -53,6 +54,7 @@
             "File::Find::Rule" : "0",
             "Getopt::Long" : "0",
             "Log::Log4perl" : "0",
+            "Parallel::ForkManager" : "0",
             "Path::Tiny" : "0",
             "Pod::Usage" : "0",
             "autodie" : "0",
@@ -68,5 +70,13 @@
       }
    },
    "release_status" : "unstable",
-   "version" : "0.01"
+   "resources" : {
+      "repository" : {
+         "url" : "https://mocnii@bitbucket.org/mocnii/stratiphyparallel.git"
+      }
+   },
+   "version" : "0.01",
+   "x_contributors" : [
+      "mocnii <msestak@irb.hr>"
+   ]
 }

@@ -18,6 +18,8 @@ requires 'Pod::Usage';
 requires 'Capture::Tiny';
 requires 'Log::Log4perl';
 requires 'File::Find::Rule';
+requires 'Parallel::ForkManager';
+requires 'Config::Std';
 
 author_requires 'Term::ReadKey';
 author_requires 'Regexp::Debugger';

@@ -12,6 +12,7 @@ my @subs = qw(
   _capture_output
   _exec_cmd
   _dbi_connect
+  stratiphy_parallel
  
 );
 

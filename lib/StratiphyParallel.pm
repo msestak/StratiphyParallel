@@ -14,6 +14,7 @@ use Data::Dumper;
 use Log::Log4perl;
 use File::Find::Rule;
 use Config::Std { def_sep => '=' };   #MySQL uses =
+use Parallel::ForkManager;
 
 our $VERSION = "0.01";
 
@@ -24,6 +25,7 @@ our @EXPORT_OK = qw{
   _capture_output
   _exec_cmd
   _dbi_connect
+  stratiphy_parallel
 
 };
 
@@ -66,7 +68,7 @@ sub run {
 
     #call write modes (different subs that print different jobs)
     my %dispatch = (
-        install_sandbox           => \&install_sandbox,              # and create dirs
+        stratiphy_parallel           => \&stratiphy_parallel,              # and create dirs
 
     );
 
@@ -133,6 +135,13 @@ sub get_parameters_from_cmd {
         'infile|if=s'   => \$cli{infile},
         'out|o=s'       => \$cli{out},
         'outfile|of=s'  => \$cli{outfile},
+
+
+        'nodes|no=s'    => \$cli{nodes},
+        'names|na=s'    => \$cli{names},
+        'max_process|max=i'=> \$cli{max_process},
+        'e_value|e=s'   => \$cli{e_value},
+        'tax_id|ti=i'   => \$cli{tax_id},
 
         'host|ho=s'      => \$cli{host},
         'database|d=s'  => \$cli{database},
@@ -418,53 +427,55 @@ sub stratiphy_parallel {
     $log->logcroak('stratiphy_parallel() needs a $param_href') unless @_ == 1;
     my ($param_href) = @_;
 
-    my $INFILE      = $param_href->{INFILE}      or $log->logcroak('no $INFILE specified on command line!');
-    my $MAX_PROCESS = $param_href->{MAX_PROCESS} or $log->logcroak('no $MAX_PROCESS specified on command line!');
-    my $E_VALUE     = $param_href->{E_VALUE}     or $log->logcroak('no $E_VALUE specified on command line!');
-	my $TAX_ID      = $param_href->{TAX_ID}      or $log->logcroak('no $TAX_ID specified on command line!');
+    my $infile      = $param_href->{infile}      or $log->logcroak('no $infile specified on command line!');
+    my $max_process = $param_href->{max_process} or $log->logcroak('no $max_process specified on command line!');
+    my $e_value     = $param_href->{e_value}     or $log->logcroak('no $e_value specified on command line!');
+	my $tax_id      = $param_href->{tax_id}      or $log->logcroak('no $tax_id specified on command line!');
+    my $nodes       = $param_href->{nodes}       or $log->logcroak('no $nodes specified on command line!');
+    my $names       = $param_href->{names}       or $log->logcroak('no $names specified on command line!');
 
 	# get infile and outdir
-	my $out_dir = path($INFILE)->parent;
+	my $out_dir = path($infile)->parent;
 	$log->trace("Report: OUT_DIR:$out_dir");
-	my $species = path($INFILE)->basename;
+	my $species = path($infile)->basename;
 	$species = substr($species, 0, 2);
 	$log->trace("Report: species:$species");
 
 	# split e_values to array to fork on each later
-	my ($e_value_start, $e_value_end) = split('-', $E_VALUE);
+	my ($e_value_start, $e_value_end) = split('-', $e_value);
 	my @e_values = $e_value_start .. $e_value_end;
-	$log->trace("E_VALUES:@e_values");
+	$log->trace("e_values:@e_values");
 
 	#make hot current filehandle (disable buffering)
 	$| = 1;
 
 	# start
-	say "parent PID $$";
-	my $pm = Parallel::ForkManager->new($MAX_PROCESS);
+	$log->trace("Report: parent PID $$ forking $max_process processes");
+	my $pm = Parallel::ForkManager->new($max_process);
 
-	FILE_LOOP:
+	E_VALUE_LOOP:
 	foreach my $e_value (@e_values){
 		#modify the e-value
 		my $real_e_value = '1e-' . $e_value;
 	
 		#make the fork
-		my $pid = $pm->start and next FILE_LOOP;
+		my $pid = $pm->start and next E_VALUE_LOOP;
 	
 		# run the stratiphy step
 		my $map = path($out_dir, $species . $e_value . '.phmap');
 		$log->debug("Action: started child for {$map}");
-		my $cmd = qq{PhyloStrat -b $INFILE -n /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync -t $TAX_ID -e $real_e_value > $map};
+		my $cmd = qq{PhyloStrat -b $infile -n $nodes -t $tax_id -e $real_e_value > $map};
 		$log->trace("CMD:$cmd");
-		system($cmd) and die "Error: can't stratiphy $INFILE to $map:$!";
+		system($cmd) and die "Error: can't stratiphy $infile to $map:$!";
 		$log->debug("Report: stratiphy finish:$map");
 
 		# run the AddNames step
 		my $map_with_names = path($map . '_names');
 		#say "second step: map with names {$map_with_names}";
-		my $cmd2 = qq{AddNames.pl -m $map -n /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new > $map_with_names};
+		my $cmd2 = qq{AddNames.pl -m $map -n $names > $map_with_names};
 		$log->trace("CMD:$cmd2");
-		system($cmd2) and die "Error: can't add names to $map:$!";
-		$log->debug("Report: summary finish:$map_with_names");
+		system($cmd2) and die "Error: can't add names $names to $map:$!";
+		$log->debug("Report: addnames finish:$map_with_names");
 
 		# run the summary step
 		my $map_summary = path($map . '_sum');
@@ -496,14 +507,14 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
 
 =head1 SYNOPSIS
 
-    StratiphyParallel.pm --mode=install_sandbox --sandbox=/msestak/sandboxes/ --opt=/msestak/opt/mysql/
+    StratiphyParallel.pm /home/msestak/prepare_blast/out/mm_plus/mm_all_plus_16_12_2015
 
 =head1 DESCRIPTION
 
 StratiphyParallel is modulino to run PhyloStrat in parallel, collect information from maps and run multiple log-odds analyses on them.
 
  --mode=mode                Description
- --mode=install_sandbox     installs MySQL::Sandbox and prompts for modification of .bashrc
+ --mode=stratiphy_parallel     installs MySQL::Sandbox and prompts for modification of .bashrc
  
  For help write:
  StratiphyParallel.pm -h
@@ -513,15 +524,15 @@ StratiphyParallel is modulino to run PhyloStrat in parallel, collect information
 
 =over 4
 
-=item install_sandbox
+=item stratiphy_parallel
 
  # options from command line
- StratiphyParallel.pm --mode=install_sandbox --sandbox=$HOME/sandboxes/ --opt=$HOME/opt/mysql/
+ StratiphyParallel.pm --mode=stratiphy_parallel --infile /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015 --max_process=12 --e_value=3-30 --tax_id=7227 --nodes=/home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync --names=/home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new -v -v
 
  # options from config
- StratiphyParallel.pm --mode=install_sandbox
+ StratiphyParallel.pm --mode=stratiphy_parallel
 
-Install MySQL::Sandbox, set environment variables (SANDBOX_HOME and SANBOX_BINARY) and create these directories if needed.
+Runs Phylostrat in parallel with fork (defined by --max_process). It requires names (--names), nodes (--nodes) and blast output (--infile) files. It also needs tax_id (--tax_id) of species and range of BLAST e-values (--e_values) for which to run Phylostrat.
 
 =back
 
@@ -531,18 +542,23 @@ All configuration in set in stratiphyparallel.cnf that is found in ./lib directo
 Example:
 
  [General]
- sandbox  = /home/msestak/sandboxes
- opt      = /home/msestak/opt/mysql
- out      = /msestak/gitdir/StratiphyParallel
- infile   = $HOME/mysql-5.6.27-linux-glibc2.5-x86_64.tar.gz
+ nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
+ names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
+ #in          = 
+ #out         = .
+ infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
+ #outfile     = 
+ max_process = 12
+ e_value     = 3-30
+ tax_id      = 7227
  
  [Database]
  host     = localhost
  database = test
  user     = msandbox
  password = msandbox
- port     = 5625
- socket   = /tmp/mysql_sandbox5625.sock
+ port     = 5627
+ socket   = /tmp/mysql_sandbox5627.sock
 
 =head1 LICENSE
 
