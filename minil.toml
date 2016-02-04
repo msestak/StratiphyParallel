@@ -1,0 +1,4 @@
+name = "StratiphyParallel"
+# badges = ["travis"]
+module_maker="ModuleBuildTiny"
+

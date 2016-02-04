@@ -1,0 +1,14 @@
+[General]
+sandbox  = /home/msestak/sandboxes
+opt      = /home/msestak/opt/mysql
+out      = /msestak/gitdir/MySQLinstall
+infile   = /home/msestak/mysql-5.6.27-linux-glibc2.5-x86_64.tar.gz
+
+[Database]
+host     = localhost
+database = test
+user     = msandbox
+password = msandbox
+port     = 5627
+socket   = /tmp/mysql_sandbox5627.sock
+
