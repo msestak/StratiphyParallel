@@ -143,7 +143,7 @@ sub get_parameters_from_cmd {
         'out|o=s'       => \$cli{out},
         'outfile|of=s'  => \$cli{outfile},
 
-
+        'relation|r=s'  => \$cli{relation},
         'nodes|no=s'    => \$cli{nodes},
         'names|na=s'    => \$cli{names},
         'max_process|max=i'=> \$cli{max_process},
@@ -823,8 +823,11 @@ sub multi_maps {
     my ($param_href) = @_;
 
 	#my $out      = $param_href->{out}    or $log->logcroak('no $out specified on command line!');
-	my $in      = $param_href->{in}      or $log->logcroak( 'no $in specified on command line!' );
+	my $in       = $param_href->{in}      or $log->logcroak( 'no $in specified on command line!' );
 	#my $outfile = $param_href->{outfile} or $log->logcroak( 'no $outfile specified on command line!' );
+	my $infile   = $param_href->{infile} or $log->logcroak( 'no $infile specified on command line!' );
+	my $relation = $param_href->{relation} or $log->logcroak( 'no $relation specified on command line!' );
+	$relation = path($relation)->absolute;
 
 	# collect maps from IN
 	my $sorted_maps_aref = _sorted_files_in( $in, 'phmap_names' );
@@ -832,12 +835,17 @@ sub multi_maps {
 	# get new handle
     my $dbh = _dbi_connect($param_href);
 
-	# foreach map create and load into database
+	# before maps import one term (specific part)
+	my $term_tbl = _import_term($infile, $dbh, $relation);
+
+	# foreach map create and load into database (general reusable)
 	foreach my $map (@$sorted_maps_aref) {
 		
-	#import map
-	_import_map($in, $map, $dbh);
+	# import map
+	my $map_tbl = _import_map($in, $map, $dbh);
 
+	# connect term
+	#_connect_term_to_map($term_tbl, $map_tbl, $dbh);
 
 
 
@@ -850,9 +858,9 @@ sub multi_maps {
 
 
 ### INTERNAL UTILITY ###
-# Usage      : _import_map($in, $map, $dbh);
+# Usage      : my $map_tbl = _import_map($in, $map, $dbh);
 # Purpose    : imports map with header
-# Returns    : nothing
+# Returns    : name of map table
 # Parameters : input dir, full path to map file and database handle
 # Throws     : croaks if wrong number of parameters
 # Comments   : creates temp files without header for LOAD data infile
@@ -927,21 +935,63 @@ sub _import_map {
 	# unlink tmp map file
 	unlink $temp_map and $log->trace("Action: $temp_map unlinked");
 
-    return;
+    return $map_tbl;
 }
 
 
+### INTERNAL UTILITY ###
+# Usage      : my $term_tbl = _import_term($infile, $dbh, $relation);
+# Purpose    : imports association term into MySQL
+# Returns    : name of term table
+# Parameters : input file and database handle
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : --mode=multi_maps
+sub _import_term {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_import_term() needs {$infile, $dbh, $relation}') unless @_ == 3;
+    my ($infile, $dbh, $relation) = @_;
+
+	# get name of map table
+	my $term_tbl = path($infile)->basename;
+	($term_tbl) = $term_tbl =~ m/\A([^\.]+)\.(.+)\z/;
+	$term_tbl   .= '_term';
+
+    # create map table
+    my $create_query = sprintf( qq{
+	CREATE TABLE %s (
+	gene_name VARCHAR(20) NOT NULL,
+	gene_id VARCHAR(20) NOT NULL,
+	prot_id VARCHAR(20) NULL,
+	phylostrata TINYINT UNSIGNED NULL,
+	ti INT UNSIGNED NULL,
+	species_name VARCHAR(200) NULL,
+	PRIMARY KEY(gene_id),
+	KEY(prot_id)
+    ) }, $dbh->quote_identifier($term_tbl) );
+	_create_table( { table_name => $term_tbl, dbh => $dbh, query => $create_query } );
+	$log->trace("Report: $create_query");
+
+	# load data infile (needs column list or empty)
+	my $column_list = '(gene_name, gene_id)';
+	_load_table_into($term_tbl, $infile, $dbh, $column_list);
+
+	# load and connect to ensembl_relation_table
+	_connect_to_relation($term_tbl, $dbh, $relation);
 
 
+	#
+	#UPDATE DMR1_map AS t
+	#INNER JOIN dr_all_plus_15_12_2015_remap AS map 
+	#ON t.gene_id = map.gene_id
+	#SET t.prot_id = map.prot_id, t.phylostrata = map.phylostrata, t.ti= map.ti, t.species_name = map.species_name;
+	##410
+	#
+	#DELETE t FROM DMR1_map AS t
+	#WHERE phylostrata IS NULL;
 
-
-
-
-
-
-
-
-
+    return $term_tbl;
+}
 
 
 ### INTERNAL UTILITY ###
@@ -1011,6 +1061,88 @@ sub _create_table {
 }
 
 
+### INTERNAL UTILITY ###
+# Usage      : _load_table_into($tbl_name, $infile, $dbh, $column_list);
+# Purpose    : LOAD DATA INFILE of $infile into $tbl_name
+# Returns    : nothing
+# Parameters : ($tbl_name, $infile, $dbh)
+# Throws     : croaks if wrong number of parameters
+# Comments   : $column_list can be empty
+# See Also   : 
+sub _load_table_into {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_load_table_into() needs {$tbl_name, $infile, $dbh + opt. $column_list}') unless @_ == 3 or 4;
+    my ($tbl_name, $infile, $dbh, $column_list) = @_;
+	$column_list //= '';
+
+	# load query
+    my $load_query = qq{
+    LOAD DATA INFILE '$infile'
+    INTO TABLE $tbl_name } . q{ FIELDS TERMINATED BY '\t'
+    LINES TERMINATED BY '\n' }
+	. $column_list;
+	$log->trace("Report: $load_query");
+
+	# report number of rows inserted
+	my $rows;
+    eval { $rows = $dbh->do( $load_query ) };
+	$log->error( "Action: loading into table $tbl_name failed: $@" ) if $@;
+	$log->debug( "Action: table $tbl_name inserted $rows rows!" ) unless $@;
+
+    return;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : _connect_to_relation($term_tbl, $dbh, $relation);
+# Purpose    : connects term table to relation table (to get prot ids)
+# Returns    : nothing
+# Parameters : $term_tbl, database handle and relation file path
+# Throws     : croaks if wrong number of parameters
+# Comments   : relation file location is used here
+# See Also   : _import_term() which calls it
+sub _connect_to_relation {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_connect_to_relation() needs {$term_tbl, $dbh, $relation}') unless @_ == 3;
+    my ($term_tbl, $dbh, $relation) = @_;
+
+	# set name of relation table
+	my $rel_tbl = path($relation)->basename;
+	($rel_tbl) = $rel_tbl =~ m/\A([^\.]+)\.(.+)\z/;
+	$rel_tbl   .= '_rel';
+
+	# create relation table
+    my $create_query = sprintf( qq{
+	CREATE TABLE %s (
+	prot_id VARCHAR(20) NULL,
+	gene_id VARCHAR(20) NOT NULL,
+	transcript_id VARCHAR(20) NOT NULL,
+	aaseq MEDIUMTEXT NOT NULL,
+	PRIMARY KEY(prot_id),
+	KEY(gene_id)
+    ) }, $dbh->quote_identifier($rel_tbl) );
+	_create_table( { table_name => $rel_tbl, dbh => $dbh, query => $create_query } );
+	$log->trace("Report: $create_query");
+
+	# load data infile (needs column list or empty)
+	#my $column_list = '(gene_name, gene_id)';
+	_load_table_into($rel_tbl, $relation, $dbh);
+
+	# update term table with gene_id
+	my $update_q = sprintf( qq{
+	UPDATE %s AS term
+	INNER JOIN %s AS rel ON term.gene_id = rel.gene_id
+	SET term.prot_id = rel.prot_id
+	}, $dbh->quote_identifier($term_tbl), $dbh->quote_identifier($rel_tbl) );
+
+	# report number of rows updated
+	my $rows;
+    eval { $rows = $dbh->do( $update_q ) };
+	$log->error( "Action: updating table $term_tbl failed: $@" ) if $@;
+	$log->debug( "Action: table $term_tbl updated $rows rows!" ) unless $@;
+
+    return;
+}
 
 
 1;
@@ -1030,6 +1162,9 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
 
     # collect phylo summary maps
     StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
+
+    # import maps and one term and calculate hypergeometric test for every term map
+	StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -v
 
 
 
@@ -1076,35 +1211,43 @@ Collects phylo summary maps, compares them and writes them to Excel file.
  StratiphyParallel.pm --mode=multi_maps --in=./data/ -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
  # options from config
- StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -v -v
+ StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -v
 
-Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel.
+Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel. Input file is term file, relation file is used here to update term table so it can connect to map table.
 
 =back
 
 =head1 CONFIGURATION
 
-All configuration in set in stratiphyparallel.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows L<< Config::Std|https://metacpan.org/pod/Config::Std >> format and rules.
+All configuration is set in stratiphyparallel.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows L<< Config::Std|https://metacpan.org/pod/Config::Std >> format and rules.
 Example:
 
  [General]
- nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
- names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
- in          = /home/msestak/prepare_blast/out/dr_plus/
+ #best to specify on command line because it changes
+ #in          = /home/msestak/prepare_blast/out/dr_plus/
  #out         = .
- infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
- outfile     = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
+ #infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
+ #outfile     = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
+ 
+ [Stratiphy]
  max_process = 12
  e_value     = 3-30
  tax_id      = 7227
+ nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
+ names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
+ 
+ [Maps]
+ relation    = /msestak/workdir/danio_dev_stages_phylo/in/dr_splicvar
  
  [Database]
  host     = localhost
- database = test
+ database = pharyngula
  user     = msandbox
  password = msandbox
- port     = 5627
- socket   = /tmp/mysql_sandbox5627.sock
+ port     = 5625
+ socket   = /tmp/mysql_sandbox5625.sock
+
+
 
 =head1 LICENSE
 

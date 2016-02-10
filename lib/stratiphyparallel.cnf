@@ -1,13 +1,19 @@
 [General]
-nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
-names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
-in          = /home/msestak/prepare_blast/out/dr_plus/
+#best to specify on command line because it changes
+#in          = /home/msestak/prepare_blast/out/dr_plus/
 #out         = .
-infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
-outfile     = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
+#infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
+#outfile     = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
+
+[Stratiphy]
 max_process = 12
 e_value     = 3-30
 tax_id      = 7227
+nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
+names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
+
+[Maps]
+relation    = /msestak/workdir/danio_dev_stages_phylo/in/dr_splicvar
 
 [Database]
 host     = localhost
@@ -16,4 +22,5 @@ user     = msandbox
 password = msandbox
 port     = 5625
 socket   = /tmp/mysql_sandbox5625.sock
+
 

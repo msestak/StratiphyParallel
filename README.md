@@ -11,6 +11,9 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
     # collect phylo summary maps
     StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
 
+    # import maps and one term and calculate hypergeometric test for every term map
+        StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -v
+
 # DESCRIPTION
 
 StratiphyParallel is modulino to run PhyloStrat in parallel, collect information from maps and run multiple log-odds analyses on them.
@@ -51,33 +54,39 @@ StratiphyParallel is modulino to run PhyloStrat in parallel, collect information
         StratiphyParallel.pm --mode=multi_maps --in=./data/ -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
         # options from config
-        StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -v -v
+        StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -v
 
-    Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel.
+    Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel. Input file is term file, relation file is used here to update term table so it can connect to map table.
 
 # CONFIGURATION
 
-All configuration in set in stratiphyparallel.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows [Config::Std](https://metacpan.org/pod/Config::Std) format and rules.
+All configuration is set in stratiphyparallel.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows [Config::Std](https://metacpan.org/pod/Config::Std) format and rules.
 Example:
 
     [General]
-    nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
-    names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
-    in          = /home/msestak/prepare_blast/out/dr_plus/
+    #best to specify on command line because it changes
+    #in          = /home/msestak/prepare_blast/out/dr_plus/
     #out         = .
-    infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
-    outfile     = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
+    #infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
+    #outfile     = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
+    
+    [Stratiphy]
     max_process = 12
     e_value     = 3-30
     tax_id      = 7227
+    nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
+    names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
+    
+    [Maps]
+    relation    = /msestak/workdir/danio_dev_stages_phylo/in/dr_splicvar
     
     [Database]
     host     = localhost
-    database = test
+    database = pharyngula
     user     = msandbox
     password = msandbox
-    port     = 5627
-    socket   = /tmp/mysql_sandbox5627.sock
+    port     = 5625
+    socket   = /tmp/mysql_sandbox5625.sock
 
 # LICENSE
 
