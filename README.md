@@ -45,6 +45,16 @@ StratiphyParallel is modulino to run PhyloStrat in parallel, collect information
 
     Collects phylo summary maps, compares them and writes them to Excel file.
 
+- multi\_maps
+
+        # options from command line
+        StratiphyParallel.pm --mode=multi_maps --in=./data/ -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+        # options from config
+        StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -v -v
+
+    Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel.
+
 # CONFIGURATION
 
 All configuration in set in stratiphyparallel.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows [Config::Std](https://metacpan.org/pod/Config::Std) format and rules.
