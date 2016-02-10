@@ -23,6 +23,8 @@ requires 'Config::Std';
 requires 'Excel::Writer::XLSX';
 requires 'DBI';
 requires 'DBD::mysql';
+requires 'Statistics::R';
+requires 'List::Util';
 
 author_requires 'Term::ReadKey';
 author_requires 'Regexp::Debugger';

@@ -12,7 +12,7 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
     StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
 
     # import maps and one term and calculate hypergeometric test for every term map
-        StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -v
+        StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -v
 
 # DESCRIPTION
 
@@ -54,9 +54,9 @@ StratiphyParallel is modulino to run PhyloStrat in parallel, collect information
         StratiphyParallel.pm --mode=multi_maps --in=./data/ -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
         # options from config
-        StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -v
+        StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -v
 
-    Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel. Input file is term file, relation file is used here to update term file so it can connect to map table.
+    Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel. Input file is term file, relation file is used here to update term file so it can connect to map table. Out is R working directory and outfile is final Excel file.
 
 # CONFIGURATION
 

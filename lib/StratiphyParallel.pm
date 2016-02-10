@@ -18,6 +18,8 @@ use Parallel::ForkManager;
 use Excel::Writer::XLSX;
 use DBI;
 use DBD::mysql;
+use Statistics::R;
+use List::Util qw/sum/;
 
 our $VERSION = "0.01";
 
@@ -822,10 +824,10 @@ sub multi_maps {
     $log->logcroak('multi_maps() needs a $param_href') unless @_ == 1;
     my ($param_href) = @_;
 
-	#my $out      = $param_href->{out}    or $log->logcroak('no $out specified on command line!');
-	my $in       = $param_href->{in}      or $log->logcroak( 'no $in specified on command line!' );
-	#my $outfile = $param_href->{outfile} or $log->logcroak( 'no $outfile specified on command line!' );
-	my $infile   = $param_href->{infile} or $log->logcroak( 'no $infile specified on command line!' );
+	my $out      = $param_href->{out}      or $log->logcroak('no $out specified on command line!');
+	my $in       = $param_href->{in}       or $log->logcroak( 'no $in specified on command line!' );
+	my $outfile  = $param_href->{outfile}  or $log->logcroak( 'no $outfile specified on command line!' );
+	my $infile   = $param_href->{infile}   or $log->logcroak( 'no $infile specified on command line!' );
 	my $relation = $param_href->{relation} or $log->logcroak( 'no $relation specified on command line!' );
 	$relation = path($relation)->absolute;
 
@@ -835,21 +837,28 @@ sub multi_maps {
 	# get new handle
     my $dbh = _dbi_connect($param_href);
 
+	# create new Excel workbook that will hold calculations
+	my ($workbook, $log_odds_sheet, $black_bold, $red_bold) = _create_excel($outfile);
+
 	# foreach map create and load into database (general reusable)
 	foreach my $map (@$sorted_maps_aref) {
-		
-	# import map
-	my $map_tbl = _import_map($in, $map, $dbh);
 
-	# import one term (specific part)
-	my $term_tbl = _import_term($infile, $dbh, $relation);
-
-	# connect term
-	_update_term_with_map($term_tbl, $map_tbl, $dbh);
-
-
-
+		# import map
+		my $map_tbl = _import_map($in, $map, $dbh);
+	
+		# import one term (specific part)
+		my $term_tbl = _import_term($infile, $dbh, $relation);
+	
+		# connect term
+		_update_term_with_map($term_tbl, $map_tbl, $dbh);
+	
+		# calculate hypergeometric test and print to Excel
+		_hypergeometric_test( { term => $term_tbl, map => $map_tbl, sheet => $log_odds_sheet, black_bold => $black_bold, red_bold => $red_bold, %{$param_href} } );
+	
 	}   # end foreach map
+
+	# close the Excel file
+	$workbook->close() or $log->logdie( "Error closing Excel file: $!" );
 
 	$dbh->disconnect;
 
@@ -1225,6 +1234,332 @@ sub _table_exists {
 }
 
 
+## INTERNAL UTILITY ###
+# Usage      : _calculate_in_R( $r_href );
+# Purpose    : calculates hypergeometric test in R
+# Returns    : href with calculated values
+# Parameters : input values for quant, hit, sample and total
+# Throws     : 
+# Comments   : 
+# See Also   :
+sub _calculate_in_R {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak( '_calculate_in_R() needs a hash_ref' ) unless @_ == 1;
+    my ($param_href) = @_;
+
+    #preparation of parameters (extract arefs from href where values are arefs)
+    my $phylostrata_aref = $param_href->{phylo};
+    my $func_term_aref   = $param_href->{term};
+    my $quant_aref       = $param_href->{quant};
+    my $sample_aref      = $param_href->{sample};
+    my $hit_aref         = $param_href->{hit};
+    my $total_aref       = $param_href->{total};
+    my $out              = $param_href->{out};   #dereferences only outer hashref
+
+    #start with R block
+    # Create a communication bridge with R and start R
+    my $R = Statistics::R->new() and $log->trace("Report: connection to R opened");
+
+    #run a command in R
+    #first set working directory and check it
+    my $cwd_before = $R->get('getwd()');
+    $log->trace( 'Report: this is directory before:  ', "$cwd_before" );
+	my $set_wd = <<"SETWD";
+	setwd("$out")
+SETWD
+    $R->run($set_wd);
+    my $cwd_set = $R->get('getwd()');
+    $log->trace( 'Report: working directory: ', "$cwd_set" );
+
+    #set a list in R (accepts array_ref and returns array_ref)
+    $R->set( 'phylostrata', $phylostrata_aref );
+    $R->set( 'func_term',   $func_term_aref );
+    $R->set( 'quant',       $quant_aref );
+    $R->set( 'sample',      $sample_aref );
+    $R->set( 'hit',         $hit_aref );
+    $R->set( 'total',       $total_aref );
+
+    my $printed_phylostrata_ref = $R->get('phylostrata');
+    $log->trace( 'Returned phylostrata from R:', "@{$printed_phylostrata_ref}" );
+
+    # Here-doc with multiple R commands:
+    # first combine arrays into data.frame
+    # log by default means ln in R
+    my $cmds_combine_dataframe = <<'COMBINE';
+    dataset <- cbind.data.frame(phylostrata, func_term, quant, sample, hit, total)
+    odds_sample <-quant / (sample - quant)
+    odds_rest <- (hit - quant) / (total - hit - sample + quant)
+    real_log_odds <- log(odds_sample/odds_rest)
+    dataset <- cbind.data.frame(dataset, odds_sample, odds_rest, real_log_odds)
+COMBINE
+    my $combine_exec = $R->run($cmds_combine_dataframe);
+	$log->trace('Dataframe combined in R');
+
+    #hypergeometric calculation
+    my $cmds_hyper_exec = <<'HYPER';
+    CDFHyper = phyper(dataset$quant, dataset$hit, dataset$total - dataset$hit, dataset$sample)
+    PDFHyper = dhyper(dataset$quant, dataset$hit, dataset$total - dataset$hit, dataset$sample)
+    CDFHyperOver = (1 - CDFHyper) + PDFHyper
+    raw_p_value = pmin(CDFHyper, CDFHyperOver)*2
+    dataset = cbind.data.frame(dataset, CDFHyper, CDFHyperOver, raw_p_value)
+HYPER
+    my $hyper_exec = $R->run($cmds_hyper_exec);
+	$log->trace('Hypergeometric test calculated in R');
+
+    #calculate values for mapping
+    #sort by raw_p_value to calculate the FDR
+    my $cmds_fdr = <<'FDR';
+    dataset$raw_p_value_map = ifelse (dataset$raw_p_value < 0.001, "<0.001", ifelse(dataset$raw_p_value < 0.01, "<0.01", ifelse(dataset$raw_p_value < 0.05, "<0.05", "ns")))
+    dataset_sorted = dataset[order(dataset$raw_p_value),]
+    niz = phylostrata
+    dataset_sorted = cbind.data.frame(dataset_sorted, niz)
+    dataset_sorted = dataset_sorted[order(dataset_sorted$phylostrata),]
+    FDR_p_value = dataset_sorted$raw_p_value* max(dataset$phylostrata)/dataset_sorted$niz
+    dataset_sorted = cbind.data.frame(dataset_sorted, FDR_p_value)
+    dataset_sorted$for_map_p_value = ifelse (dataset_sorted$FDR_p_value < 0.001, "<0.001", ifelse(dataset_sorted$FDR_p_value < 0.01, "<0.01", ifelse(dataset_sorted$FDR_p_value < 0.05, "<0.05", "ns")))
+FDR
+    my $fdr_exec = $R->run($cmds_fdr);
+	$log->trace('FDR calculated in R');
+
+    #return values from R
+    return (
+        {   odds_sample     => $R->get('dataset_sorted$odds_sample'),
+            odds_rest       => $R->get('dataset_sorted$odds_rest'),
+            real_log_odds   => $R->get('dataset_sorted$real_log_odds'),
+            cdfhyper        => $R->get('dataset_sorted$CDFHyper'),
+            cdfhyperover    => $R->get('dataset_sorted$CDFHyperOver'),
+            raw_p_value     => $R->get('dataset_sorted$raw_p_value'),
+            raw_p_value_map => $R->get('dataset_sorted$raw_p_value_map'),
+            niz             => $R->get('dataset_sorted$niz'),
+            fdr_p_value     => $R->get('dataset_sorted$FDR_p_value'),
+            for_map_p_value => $R->get('dataset_sorted$for_map_p_value'),
+        });
+}
+
+### INTERFACE SUB ###
+# Usage      : _hypergeometric_test( $param_href );
+# Purpose    : creates excel file with log-odds info
+# Returns    : nothing
+# Parameters : ( $param_href )
+# Throws     : croaks for parameters
+# Comments   : it works on maps (not map_phylo) and requires prot_id in map table
+# See Also   : 
+sub _hypergeometric_test {
+	my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak ('_hypergeometric_test() needs {$param_href}') unless @_ == 1;
+    my ($param_href ) = @_;
+
+	my $log_odds_sheet = $param_href->{sheet};
+    
+	# get new database handle
+    my $dbh      = _dbi_connect($param_href);
+
+    #add a counter for different files and lines
+    state $line_counter = 0;
+
+    # Add a caption to each worksheet
+    $log_odds_sheet->write( $line_counter, 0, $param_href->{map} . '_x_' . $param_href->{term}, $param_href->{red_bold} );
+    $line_counter++;
+
+	$log_odds_sheet->write( $line_counter, 0,  'phylostrata',                                    $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 1,  'Functional term',                                $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 2,  'quant',                                          $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 3,  'sample',                                         $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 4,  'hit',                                            $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 5,  'total',                                          $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 6,  'Odds sample (quant/(sample-quant))',             $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 7,  'Odds rest (hit-quant)/(total-hit-sample+quant)', $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 8,  'Real log-odds',                                  $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 9,  'CDFHyper',                                       $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 10, 'CDFHyperOver',                                   $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 11, 'Raw P_value',                                    $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 12, 'Raw P_value for map',                            $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 13, 'Order',                                          $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 14, 'FDR P_value',                                    $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 15, 'for map P_value',                                $param_href->{black_bold} );
+
+    #double increment needed because of difference between absolute notation starting at 0
+    #and relative notation starting at 1 (0,0 == A1)
+    $line_counter++;
+    $line_counter++;
+
+	# retrieve columns from map table
+	my ($phylo_aref, $sample_aref, $total_aref) = _retrieve_map_cols($param_href->{map}, $dbh);
+
+	#get functional term column
+	my $phylostrata = scalar @$phylo_aref;
+    my @term = ($param_href->{term}) x $phylostrata;
+
+    #writa a table in one go (oxhos missing values so this doesn't work)
+    $log_odds_sheet->write_col( "A$line_counter", $phylo_aref );
+    $log_odds_sheet->write_col( "B$line_counter", \@term );
+    $log_odds_sheet->write_col( "D$line_counter", $sample_aref );
+    $log_odds_sheet->write_col( "F$line_counter", $total_aref );
+
+	# retrieve columns from term table
+	my ($quant_aref, $hit_aref) = _retrieve_term_cols($param_href->{term}, $phylo_aref, $dbh);
+
+    #write oxphos values
+    $log_odds_sheet->write_col( "C$line_counter", $quant_aref );
+    $log_odds_sheet->write_col( "E$line_counter", $hit_aref);
+
+    #get rest of values from R using Statistics::R
+    my ($exit_href) = _calculate_in_R(
+        {   phylo  => $phylo_aref,
+            term   => \@term,
+            quant  => $quant_aref,
+            sample => $sample_aref,
+            hit    => $hit_aref,
+            total  => $total_aref,
+			out    => $param_href->{out},
+        }
+      );
+
+    #write calculated values from R to excel
+    $log_odds_sheet->write_col( "G$line_counter", $exit_href->{odds_sample} );
+    $log_odds_sheet->write_col( "H$line_counter", $exit_href->{odds_rest} );
+    $log_odds_sheet->write_col( "I$line_counter", $exit_href->{real_log_odds} );
+    $log_odds_sheet->write_col( "J$line_counter", $exit_href->{cdfhyper} );
+    $log_odds_sheet->write_col( "K$line_counter", $exit_href->{cdfhyperover} );
+    $log_odds_sheet->write_col( "L$line_counter", $exit_href->{raw_p_value} );
+    $log_odds_sheet->write_col( "M$line_counter", $exit_href->{raw_p_value_map} );
+    $log_odds_sheet->write_col( "N$line_counter", $exit_href->{niz} );
+    $log_odds_sheet->write_col( "O$line_counter", $exit_href->{fdr_p_value} );
+    $log_odds_sheet->write_col( "P$line_counter", $exit_href->{for_map_p_value} );
+
+    #increment for number of phylostrata (here 19) to make space for next map (file)
+    $line_counter += $phylostrata + 2;
+
+	# report writing to Excel to log
+	$log->debug("Report: wrote $param_href->{map} . '_x_' . $param_href->{term} to $param_href->{outfile}");
+
+    $dbh->disconnect;
+
+	return;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : my ($workbook, $log_odds_sheet, $black_bold, $red_bold) = _create_excel($outfile);
+# Purpose    : creates Excel workbook and sheet needed
+# Returns    : $workbook, $log_odds_sheet, $black_bold, $red_bold
+# Parameters : $outfile
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub _create_excel {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_create_excel() needs {$outfile}') unless @_ == 1;
+    my ($outfile) = @_;
+
+    # Create a new Excel workbook
+	if (-f $outfile) {
+		unlink $outfile and $log->warn( "Action: unlinked Excel $outfile" );
+	}
+    my $workbook = Excel::Writer::XLSX->new("$outfile") or $log->logcroak( "Problems creating new Excel file: $!" );
+
+    # Add a worksheet (log-odds for calculation);
+    my $log_odds_sheet = $workbook->add_worksheet('log_odds_hyper');
+
+    $log->trace( 'Report: Excel file: ',      $outfile );
+    $log->trace( 'Report: Excel workbook: ',  $workbook );
+    $log->trace( 'Report: Excel worksheet: ', $log_odds_sheet );
+
+    # Add a Format (bold black)
+    my $black_bold = $workbook->add_format(); $black_bold->set_bold(); $black_bold->set_color('black');
+    # Add a Format (bold red)
+    my $red_bold = $workbook->add_format(); $red_bold->set_bold(); $red_bold->set_color('red'); 
+
+    return ($workbook, $log_odds_sheet, $black_bold, $red_bold);
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : my ($phylo_aref, $sample_aref, $total_aref) = _retrieve_map_cols($param_href{map}, $dbh);
+# Purpose    : retrieves columns from map table for hypergeometric test later
+# Returns    : phylo, sample and total arefs
+# Parameters : map table name + database handle
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : part of _hypergeometric_test()
+sub _retrieve_map_cols {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_retrieve_map_cols() needs $param_href{map}') unless @_ == 2;
+    my ($map_tbl, $dbh) = @_;
+
+    #prepare the SELECT statement for full ps table
+    my $statement_ps = sprintf( qq{
+    SELECT phylostrata, COUNT(phylostrata) AS genes
+    FROM %s
+    GROUP BY phylostrata
+    ORDER BY phylostrata
+	}, $dbh->quote_identifier($map_tbl) );
+
+    # map filters the column from bi-dimensional array
+    my @phylo = map { $_->[0] } @{ $dbh->selectall_arrayref($statement_ps) };
+    my @sample = map { $_->[1] } @{ $dbh->selectall_arrayref($statement_ps) };
+    $log->trace( 'Returned phylostrata: {', join('}{', @phylo), '}' );
+ 
+    #calculate total from @col_genes;
+    my $total = sum(@sample);
+	my $phylostrata = scalar @phylo;
+    my @totals = ($total) x $phylostrata;
+
+    return (\@phylo, \@sample, \@totals);
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : my ($quant_aref, $hit_aref) = _retrieve_term_cols($param_href{term}, $phylo_aref, $dbh);
+# Purpose    : retrieves columns from term table for hypergeometric test later
+# Returns    : quant and hit arefs
+# Parameters : term table name, phylostrata aref + database handle
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : part of _hypergeometric_test()
+sub _retrieve_term_cols {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_retrieve_term_cols() needs a $param_href{term}') unless @_ == 3;
+    my ($term_tbl, $phylo_aref, $dbh) = @_;
+
+    #prepare the SELECT statement for term table
+    my $statement_term = sprintf( qq{
+    SELECT phylostrata, COUNT(phylostrata) AS genes
+    FROM %s
+    GROUP BY phylostrata
+    ORDER BY phylostrata
+    }, $dbh->quote_identifier($term_tbl) );
+
+    #prepare missing values (extra work)
+    # get array of phylo nad genes pairs:
+    my $ps_aref = $dbh->selectcol_arrayref( $statement_term, { Columns => [ 1, 2 ] } );
+    my %missing_ps = @$ps_aref;    # build hash from key-value pairs so $missing_ps{$ps} => genes
+	$log->trace("my raw phylostrata and genes from func column @$ps_aref");
+
+    #add missing values to the hash
+    foreach my $ps ( @$phylo_aref ) {
+        $missing_ps{$ps} = 0 unless exists $missing_ps{$ps};
+    }
+
+    #transform back to array to print to Excel
+    my @sorted_cols;
+    foreach my $ps ( sort { $a <=> $b } keys %missing_ps ) {
+        push @sorted_cols, $ps, $missing_ps{$ps};
+    }
+	$log->trace("my sorted columns from $term_tbl: @sorted_cols");
+    
+    #pull even - phylostrata (ex keys) and odd - genes (ex values) from array
+    #my @evens_phylo = @sorted_cols[grep !($_ % 2), 0..$#sorted_cols];    # even-index elements
+    my @quant  = @sorted_cols[grep $_ % 2,  0..$#sorted_cols];       # odd-index  elements
+	$log->trace( "my genes from func table: @quant" );
+
+    #calculate hit from @col_genes;
+    my $hit = sum(@quant);
+	my $phylostrata = scalar @$phylo_aref;
+    my @hits = ($hit) x $phylostrata;
+
+    return (\@quant, \@hits);
+}
 
 
 1;
@@ -1246,7 +1581,7 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
     StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
 
     # import maps and one term and calculate hypergeometric test for every term map
-	StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -v
+	StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -v
 
 
 
@@ -1293,9 +1628,9 @@ Collects phylo summary maps, compares them and writes them to Excel file.
  StratiphyParallel.pm --mode=multi_maps --in=./data/ -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
  # options from config
- StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -v
+ StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -v
 
-Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel. Input file is term file, relation file is used here to update term file so it can connect to map table.
+Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel. Input file is term file, relation file is used here to update term file so it can connect to map table. Out is R working directory and outfile is final Excel file.
 
 =back
 
