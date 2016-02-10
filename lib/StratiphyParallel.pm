@@ -835,17 +835,17 @@ sub multi_maps {
 	# get new handle
     my $dbh = _dbi_connect($param_href);
 
-	# before maps import one term (specific part)
-	my $term_tbl = _import_term($infile, $dbh, $relation);
-
 	# foreach map create and load into database (general reusable)
 	foreach my $map (@$sorted_maps_aref) {
 		
 	# import map
 	my $map_tbl = _import_map($in, $map, $dbh);
 
+	# import one term (specific part)
+	my $term_tbl = _import_term($infile, $dbh, $relation);
+
 	# connect term
-	#_connect_term_to_map($term_tbl, $map_tbl, $dbh);
+	_update_term_with_map($term_tbl, $map_tbl, $dbh);
 
 
 
@@ -1111,22 +1111,28 @@ sub _connect_to_relation {
 	($rel_tbl) = $rel_tbl =~ m/\A([^\.]+)\.(.+)\z/;
 	$rel_tbl   .= '_rel';
 
-	# create relation table
-    my $create_query = sprintf( qq{
-	CREATE TABLE %s (
-	prot_id VARCHAR(20) NULL,
-	gene_id VARCHAR(20) NOT NULL,
-	transcript_id VARCHAR(20) NOT NULL,
-	aaseq MEDIUMTEXT NOT NULL,
-	PRIMARY KEY(prot_id),
-	KEY(gene_id)
-    ) }, $dbh->quote_identifier($rel_tbl) );
-	_create_table( { table_name => $rel_tbl, dbh => $dbh, query => $create_query } );
-	$log->trace("Report: $create_query");
-
-	# load data infile (needs column list or empty)
-	#my $column_list = '(gene_name, gene_id)';
-	_load_table_into($rel_tbl, $relation, $dbh);
+	# check for existence of relation table
+	if ( _table_exists( $dbh, $rel_tbl) ) {
+		#print "it's there!\n";
+	}
+	else {
+		# create relation table
+	    my $create_query = sprintf( qq{
+		CREATE TABLE %s (
+		prot_id VARCHAR(20) NULL,
+		gene_id VARCHAR(20) NOT NULL,
+		transcript_id VARCHAR(20) NOT NULL,
+		aaseq MEDIUMTEXT NOT NULL,
+		PRIMARY KEY(prot_id),
+		KEY(gene_id)
+	    ) }, $dbh->quote_identifier($rel_tbl) );
+		_create_table( { table_name => $rel_tbl, dbh => $dbh, query => $create_query } );
+		$log->trace("Report: $create_query");
+	
+		# load data infile (needs column list or empty)
+		#my $column_list = '(gene_name, gene_id)';
+		_load_table_into($rel_tbl, $relation, $dbh);
+	}
 
 	# update term table with gene_id
 	my $update_q = sprintf( qq{
@@ -1143,6 +1149,82 @@ sub _connect_to_relation {
 
     return;
 }
+
+
+### INTERNAL UTILITY ###
+# Usage      : _update_term_with_map($term_tbl, $map_tbl, $dbh);
+# Purpose    : updates term table with phylostrata, ti and ps_name
+# Returns    : nothing
+# Parameters : names of tables and database handle
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : --mode=multi_maps
+sub _update_term_with_map {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_update_term_with_map() needs {$term_tbl, $map_tbl, $dbh}') unless @_ == 3;
+    my ($term_tbl, $map_tbl, $dbh) = @_;
+
+	# update term table with map
+	my $update_q = sprintf( qq{
+	UPDATE %s AS term
+	INNER JOIN %s AS map ON map.prot_id = term.prot_id
+	SET term.phylostrata = map.phylostrata, term.ti= map.ti, term.species_name = map.species_name
+	}, $dbh->quote_identifier($term_tbl), $dbh->quote_identifier($map_tbl) );
+
+	# report number of rows updated
+	my $rows;
+    eval { $rows = $dbh->do( $update_q ) };
+	$log->error( "Action: updating table $term_tbl failed: $@" ) if $@;
+	$log->debug( "Action: table $term_tbl updated $rows rows!" ) unless $@;
+
+	# delete term table where empty phylostrata
+	my $del_q = sprintf( qq{
+	DELETE term FROM %s AS term
+	WHERE phylostrata IS NULL
+	}, $dbh->quote_identifier($term_tbl) );
+
+	# report number of rows updated
+	my $rows_del;
+    eval { $rows_del = $dbh->do( $del_q ) };
+	$log->error( "Action: deleting table $term_tbl failed: $@" ) if $@;
+	$log->debug( "Action: deleted $rows_del rows from table $term_tbl!" ) unless $@;
+
+    return;
+}
+
+
+### CLASS METHOD/INSTANCE METHOD/INTERFACE SUB/INTERNAL UTILITY ###
+# Usage      : _table_exists( $dbh, $tbl_name)
+# Purpose    : checks for existence of table
+# Returns    : 1 if true 0 if false
+# Parameters : database handle and table name
+# Throws     : croaks if wrong number of parameters
+# Comments   : modified from DBI recipies
+# See Also   : 
+sub _table_exists {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_table_exists() needs {$dbh, $tbl_name}') unless @_ == 2;
+    my ($dbh, $table) = @_;
+
+    my @tables = $dbh->tables('','','','TABLE');
+    if (@tables) {
+        for (@tables) {
+            next unless $_;
+            return 1 if $_ =~ /$table/;
+        }
+    }
+    else {
+        eval {
+            local $dbh->{PrintError} = 0;
+            local $dbh->{RaiseError} = 1;
+            $dbh->do(qq{SELECT * FROM $table WHERE 1 = 0 });
+        };
+        return 1 unless $@;
+    }
+    return 0;
+}
+
+
 
 
 1;
@@ -1213,7 +1295,7 @@ Collects phylo summary maps, compares them and writes them to Excel file.
  # options from config
  StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -v
 
-Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel. Input file is term file, relation file is used here to update term table so it can connect to map table.
+Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel. Input file is term file, relation file is used here to update term file so it can connect to map table.
 
 =back
 
