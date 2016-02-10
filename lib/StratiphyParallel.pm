@@ -16,6 +16,8 @@ use File::Find::Rule;
 use Config::Std { def_sep => '=' };   #MySQL uses =
 use Parallel::ForkManager;
 use Excel::Writer::XLSX;
+use DBI;
+use DBD::mysql;
 
 our $VERSION = "0.01";
 
@@ -28,6 +30,7 @@ our @EXPORT_OK = qw{
   _dbi_connect
   stratiphy_parallel
   collect_maps
+  multi_maps
 
 };
 
@@ -72,6 +75,7 @@ sub run {
     my %dispatch = (
         stratiphy_parallel           => \&stratiphy_parallel,              # run Phylostrat in parallel
 		collect_maps                 => \&collect_maps,                    # collect maps in Excel file
+		multi_maps                   => \&multi_maps,                      # load and create maps and association maps
 
     );
 
@@ -377,27 +381,27 @@ sub _dbi_connect {
 	#split logic for operating system
 	my $osname = $^O;
 	my $data_source;
-    my $USER     = defined $param_href->{USER}     ? $param_href->{USER}     : 'msandbox';
-    my $PASSWORD = defined $param_href->{PASSWORD} ? $param_href->{PASSWORD} : 'msandbox';
+    my $user     = defined $param_href->{user}     ? $param_href->{user}     : 'msandbox';
+    my $password = defined $param_href->{password} ? $param_href->{password} : 'msandbox';
 	
 	if( $osname eq 'MSWin32' ) {	  
-		my $HOST     = defined $param_href->{HOST}     ? $param_href->{HOST}     : 'localhost';
-    	my $DATABASE = defined $param_href->{DATABASE} ? $param_href->{DATABASE} : 'blastdb';
-    	my $PORT     = defined $param_href->{PORT}     ? $param_href->{PORT}     : 3306;
+		my $host     = defined $param_href->{host}     ? $param_href->{host}     : 'localhost';
+    	my $database = defined $param_href->{database} ? $param_href->{database} : 'blastdb';
+    	my $port     = defined $param_href->{port}     ? $param_href->{port}     : 3306;
     	my $prepare  = 1;   #server side prepare is ON
 		my $use_res  = 0;   #1 doesn't work with selectall_aref (O means it catches in application)
 
-    	$data_source = "DBI:mysql:database=$DATABASE;host=$HOST;port=$PORT;mysql_server_prepare=$prepare;mysql_use_result=$use_res";
+    	$data_source = "DBI:mysql:database=$database;host=$host;port=$port;mysql_server_prepare=$prepare;mysql_use_result=$use_res";
 	}
 	elsif ( $osname eq 'linux' ) {
-		my $HOST     = defined $param_href->{HOST}     ? $param_href->{HOST}     : 'localhost';
-    	my $DATABASE = defined $param_href->{DATABASE} ? $param_href->{DATABASE} : 'blastdb';
-    	my $PORT     = defined $param_href->{PORT}     ? $param_href->{PORT}     : 3306;
-    	my $SOCKET   = defined $param_href->{SOCKET}   ? $param_href->{SOCKET}   : '/var/lib/mysql/mysql.sock';
+		my $host     = defined $param_href->{host}     ? $param_href->{host}     : 'localhost';
+    	my $database = defined $param_href->{database} ? $param_href->{database} : 'blastdb';
+    	my $port     = defined $param_href->{port}     ? $param_href->{port}     : 3306;
+    	my $socket   = defined $param_href->{socket}   ? $param_href->{socket}   : '/var/lib/mysql/mysql.sock';
     	my $prepare  = 1;   #server side prepare is ON
 		my $use_res  = 0;   #1 doesn't work with selectall_aref (O means it catches in application)
 
-    	$data_source = "DBI:mysql:database=$DATABASE;host=$HOST;port=$PORT;mysql_socket=$SOCKET;mysql_server_prepare=$prepare;mysql_use_result=$use_res";
+    	$data_source = "DBI:mysql:database=$database;host=$host;port=$port;mysql_socket=$socket;mysql_server_prepare=$prepare;mysql_use_result=$use_res";
 	}
 	else {
 		$log->error( "Running on unsupported system" );
@@ -409,13 +413,12 @@ sub _dbi_connect {
         AutoCommit         => 1,
         ShowErrorStatement => 1,
     );
-    my $dbh = DBI->connect( $data_source, $USER, $PASSWORD, \%conn_attrs );
+    my $dbh = DBI->connect( $data_source, $user, $password, \%conn_attrs );
 
     $log->trace( 'Report: connected to ', $data_source, ' by dbh ', $dbh );
 
     return $dbh;
 }
-
 
 ### INTERFACE SUB ###
 # Usage      : --mode=stratiphy_parallel
@@ -806,9 +809,206 @@ sub _add_missing_phylostrata {
 }
 
 
+### INTERFACE SUB ###
+# Usage      : --mode=multi_maps
+# Purpose    : load and create maps and association maps for multiple e_values and one term
+# Returns    : nothing
+# Parameters : $param_href
+# Throws     : croaks if wrong number of parameters
+# Comments   : writes to Excel file
+# See Also   : 
+sub multi_maps {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('multi_maps() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+	#my $out      = $param_href->{out}    or $log->logcroak('no $out specified on command line!');
+	my $in      = $param_href->{in}      or $log->logcroak( 'no $in specified on command line!' );
+	#my $outfile = $param_href->{outfile} or $log->logcroak( 'no $outfile specified on command line!' );
+
+	# collect maps from IN
+	my $sorted_maps_aref = _sorted_files_in( $in, 'phmap_names' );
+
+	# get new handle
+    my $dbh = _dbi_connect($param_href);
+
+	# foreach map create and load into database
+	foreach my $map (@$sorted_maps_aref) {
+		
+	#import map
+	_import_map($in, $map, $dbh);
 
 
 
+
+	}   # end foreach map
+
+	$dbh->disconnect;
+
+    return;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : _import_map($in, $map, $dbh);
+# Purpose    : imports map with header
+# Returns    : nothing
+# Parameters : input dir, full path to map file and database handle
+# Throws     : croaks if wrong number of parameters
+# Comments   : creates temp files without header for LOAD data infile
+# See Also   : --mode=multi_maps
+sub _import_map {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_import_map() needs {$in, $map, $dbh}') unless @_ == 3;
+    my ($in, $map, $dbh) = @_;
+
+	#my $out      = $param_href->{out}      or $log->logcroak('no $out specified on command line!');
+
+	# get name of map table
+	my $map_tbl = path($map)->basename;
+	($map_tbl) = $map_tbl =~ m/\A([^\.]+)\.phmap_names\z/;
+	$map_tbl   .= '_map';
+
+    # create map table
+    my $create_query = sprintf( qq{
+	CREATE TABLE IF NOT EXISTS %s (
+	prot_id VARCHAR(40) NOT NULL,
+	phylostrata TINYINT UNSIGNED NOT NULL,
+	ti INT UNSIGNED NOT NULL,
+	species_name VARCHAR(200) NULL,
+	PRIMARY KEY(prot_id),
+	KEY(phylostrata),
+	KEY(ti),
+	KEY(species_name)
+    ) }, $dbh->quote_identifier($map_tbl) );
+	_create_table( { table_name => $map_tbl, dbh => $dbh, query => $create_query } );
+	$log->trace("Report: $create_query");
+
+	# create tmp filename
+	#my $temp_map = Path::Tiny->tempfile( TEMPLATE => "XXXXXXXX", SUFFIX => '.map' );
+	my $temp_map = path($in, $map_tbl);
+	open (my $tmp_fh, ">", $temp_map) or $log->logdie("Error: can't open map $temp_map for writing:$!");
+
+	# need to skip header
+	open (my $map_fh, "<", $map) or $log->logdie("Error: can't open map $map for reading:$!");
+	while (<$map_fh>) {
+		chomp;
+	
+		# check if record (ignore header)
+		next if !/\A(?:[^\t]+)\t(?:[^\t]+)\t(?:[^\t]+)\t(?:[^\t]+)\z/;
+	
+		my ($prot_id, $ps, $ti, $ps_name) = split "\t", $_;
+		my (undef, $real_ps_name) = split ' : ', $ps_name;
+		#say $real_ps_name;
+		# print to tmp map file
+		say {$tmp_fh} "$prot_id\t$ps\t$ti\t$real_ps_name";
+
+		say "undefined $prot_id" if (! defined $prot_id);
+		say "undefined $ps" if (! defined $ps);
+		say "undefined $ti" if (! defined $ti);
+		say "undefined $real_ps_name" if (! defined $real_ps_name);
+	}   # end while
+
+	# explicit close needed else it can break
+	close $tmp_fh;
+
+	# load tmp map file without header
+    my $load_query = qq{
+    LOAD DATA INFILE '$temp_map'
+    INTO TABLE $map_tbl } . q{ FIELDS TERMINATED BY '\t'
+    LINES TERMINATED BY '\n'
+    };
+	$log->trace("Report: $load_query");
+	my $rows;
+    eval { $rows = $dbh->do( $load_query ) };
+	$log->error( "Action: loading into table $map_tbl failed: $@" ) if $@;
+	$log->debug( "Action: table $map_tbl inserted $rows rows!" ) unless $@;
+
+	# unlink tmp map file
+	unlink $temp_map and $log->trace("Action: $temp_map unlinked");
+
+    return;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### INTERNAL UTILITY ###
+# Usage      : my $sorted_maps_aref = _sorted_files_in( $in, $file_ext );
+# Purpose    : it sorts file names (absolute paths) based on number before dot
+# Returns    : array of sorted files
+# Parameters : input directory and file extension
+# Throws     : croaks if wrong number of parameters
+# Comments   : it ignore numbers in path only before dot is important one
+# See Also   : --mode=multi_maps
+sub _sorted_files_in {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_sorted_files_in() needs $in, $file_ext') unless @_ == 2;
+    my ($in, $file_ext) = @_;
+
+	# set glob and regex for later
+	my $glob = '*.' . "$file_ext";
+	my $regex = qr/\A(?:.+?)(\d+)\.$file_ext\z/;
+
+	# collect files
+	my @files = File::Find::Rule->file()
+                                ->name( $glob )
+                                ->in( $in );
+
+	# sort maps and print them out
+	my @sorted_files =
+	map { $_->[0] }                 # returns back to file path format
+    sort { $a->[1] <=> $b->[1] }    # compares numbers at second place in aref
+    map { [ $_, /$regex/ ] }        # puts number at second place of aref (// around regex is needed becase this is matching on $_)
+    @files;
+    $log->trace( 'Report: files in input directory sorted: ', "\n", join("\n", @sorted_files) );
+
+    return \@sorted_files;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : _create_table( { table_name => $table_info, dbh => $dbh, query => $create_query } );
+# Purpose    : it drops and recreates table
+# Returns    : nothing
+# Parameters : hash_ref of table_name, dbh and query
+# Throws     : errors if it fails
+# Comments   : 
+# See Also   : 
+sub _create_table {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_create_table() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $table_name   = $param_href->{table_name} or $log->logcroak('no $table_name sent to _create_table()!');
+    my $dbh          = $param_href->{dbh}        or $log->logcroak('no $dbh sent to _create_table()!');
+    my $create_query = $param_href->{query}      or $log->logcroak('no $query sent to _create_table()!');
+
+	#create table in database specified in connection
+    my $drop_query = sprintf( qq{
+    DROP TABLE IF EXISTS %s
+    }, $dbh->quote_identifier($table_name) );
+    eval { $dbh->do($drop_query) };
+    $log->error("Action: dropping $table_name failed: $@") if $@;
+    $log->trace("Action: $table_name dropped successfully!") unless $@;
+
+    eval { $dbh->do($create_query) };
+    $log->error( "Action: creating $table_name failed: $@" ) if $@;
+    $log->trace( "Action: $table_name created successfully!" ) unless $@;
+
+    return;
+}
 
 
 

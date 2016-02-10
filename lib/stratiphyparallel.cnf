@@ -11,9 +11,9 @@ tax_id      = 7227
 
 [Database]
 host     = localhost
-database = test
+database = pharyngula
 user     = msandbox
 password = msandbox
-port     = 5627
-socket   = /tmp/mysql_sandbox5627.sock
+port     = 5625
+socket   = /tmp/mysql_sandbox5625.sock
 

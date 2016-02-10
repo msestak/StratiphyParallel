@@ -13,6 +13,8 @@ my @subs = qw(
   _exec_cmd
   _dbi_connect
   stratiphy_parallel
+  collect_maps
+  multi_maps
  
 );
 

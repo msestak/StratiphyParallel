@@ -21,6 +21,8 @@ requires 'File::Find::Rule';
 requires 'Parallel::ForkManager';
 requires 'Config::Std';
 requires 'Excel::Writer::XLSX';
+requires 'DBI';
+requires 'DBD::mysql';
 
 author_requires 'Term::ReadKey';
 author_requires 'Regexp::Debugger';
