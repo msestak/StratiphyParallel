@@ -1587,11 +1587,36 @@ sub _add_chart {
     my $log = Log::Log4perl::get_logger("main");
     $log->logcroak('_add_chart() needs a $param_href') unless @_ == 1;
     my ($param_href) = @_;
-	#print Dumper($param_href);
-	my $workbook = $param_href->{workbook};
 
-	my $chart = $param_href->{workbook}->add_chart( type => 'line', name => "$param_href->{map}_x_$param_href->{term}", embedded => 1 );   #subtype not available
-	#name => "$param_href->{term} . '_x_' . $param_href->{map}",
+	# create 2 charts: one that will be embeded to hyper sheet and second on separate sheet
+	my $chart_single = $param_href->{workbook}->add_chart( type => 'line', name => "$param_href->{map}_x_$param_href->{term}", embedded => 0 );   #subtype not available
+	my $chart_emb    = $param_href->{workbook}->add_chart( type => 'line', name => "$param_href->{map}_x_$param_href->{term}", embedded => 1 );   #subtype not available
+
+	# configure both charts the same
+	foreach my $chart ($chart_single, $chart_emb) {
+		_configure_chart( {chart => $chart, %{$param_href} } );
+	}
+
+	# Insert the chart into the a worksheet. (second one will be printed on separate sheet automatically)
+	$param_href->{sheet}->insert_chart( "R$param_href->{start}", $chart_emb, 0, 0, 1.5, 1.5 );   #scale by 150%
+
+    return;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : _configure_chart($chart);
+# Purpose    : run configuration step for all charts
+# Returns    : nothing
+# Parameters : $param_href with chart object to configure
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub _configure_chart {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_configure_chart() needs $param_href}') unless @_ == 1;
+    my ($param_href) = @_;
+	my $chart = $param_href->{chart};
 
 	# Configure the chart.
 	$chart->add_series(
@@ -1612,11 +1637,12 @@ sub _add_chart {
 	# Display data in hidden rows or columns on the chart.
 	$chart->show_blanks_as( 'zero' );   #gap also possible
 
-	# Insert the chart into the a worksheet.
-	$param_href->{sheet}->insert_chart( "R$param_href->{start}", $chart, 0, 0, 1.5, 1.5 );   #scale by 150%
-
     return;
 }
+
+
+
+
 
 
 1;
