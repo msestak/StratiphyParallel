@@ -838,7 +838,7 @@ sub multi_maps {
     my $dbh = _dbi_connect($param_href);
 
 	# create new Excel workbook that will hold calculations
-	my ($workbook, $log_odds_sheet, $black_bold, $red_bold) = _create_excel($outfile);
+	my ($workbook, $log_odds_sheet, $black_bold, $red_bold) = _create_excel($outfile, $infile);
 
 	# foreach map create and load into database (general reusable)
 	foreach my $map (@$sorted_maps_aref) {
@@ -853,7 +853,11 @@ sub multi_maps {
 		_update_term_with_map($term_tbl, $map_tbl, $dbh);
 	
 		# calculate hypergeometric test and print to Excel
-		_hypergeometric_test( { term => $term_tbl, map => $map_tbl, sheet => $log_odds_sheet, black_bold => $black_bold, red_bold => $red_bold, %{$param_href} } );
+		my ($start_line, $end_line) = _hypergeometric_test( { term => $term_tbl, map => $map_tbl, sheet => $log_odds_sheet, black_bold => $black_bold, red_bold => $red_bold, %{$param_href} } );
+		say "$start_line-$end_line";
+
+		# insert chart for each map-term combination near maps
+		_add_chart( { term => $term_tbl, map => $map_tbl, workbook => $workbook, sheet => $log_odds_sheet, sheet_name => "hyper_$term_tbl", start => $start_line, end => $end_line } );
 	
 	}   # end foreach map
 
@@ -961,12 +965,12 @@ sub _import_term {
     $log->logcroak('_import_term() needs {$infile, $dbh, $relation}') unless @_ == 3;
     my ($infile, $dbh, $relation) = @_;
 
-	# get name of map table
+	# get name of term table
 	my $term_tbl = path($infile)->basename;
 	($term_tbl) = $term_tbl =~ m/\A([^\.]+)\.(.+)\z/;
 	$term_tbl   .= '_term';
 
-    # create map table
+    # create term table
     my $create_query = sprintf( qq{
 	CREATE TABLE %s (
 	gene_name VARCHAR(20) NOT NULL,
@@ -1337,9 +1341,9 @@ FDR
 }
 
 ### INTERFACE SUB ###
-# Usage      : _hypergeometric_test( $param_href );
+# Usage      : my ($start_line, $end_line) = _hypergeometric_test( $param_href );
 # Purpose    : creates excel file with log-odds info
-# Returns    : nothing
+# Returns    : ($start_line, $end_line) of values
 # Parameters : ( $param_href )
 # Throws     : croaks for parameters
 # Comments   : it works on maps (not map_phylo) and requires prot_id in map table
@@ -1382,6 +1386,8 @@ sub _hypergeometric_test {
     #and relative notation starting at 1 (0,0 == A1)
     $line_counter++;
     $line_counter++;
+	#save this line number as start of values
+	my $start_line = $line_counter;
 
 	# retrieve columns from map table
 	my ($phylo_aref, $sample_aref, $total_aref) = _retrieve_map_cols($param_href->{map}, $dbh);
@@ -1427,15 +1433,17 @@ sub _hypergeometric_test {
     $log_odds_sheet->write_col( "O$line_counter", $exit_href->{fdr_p_value} );
     $log_odds_sheet->write_col( "P$line_counter", $exit_href->{for_map_p_value} );
 
-    #increment for number of phylostrata (here 19) to make space for next map (file)
+    #increment for number of phylostrata to make space for next map (file)
     $line_counter += $phylostrata + 2;
+	#save this value for end of values
+	my $end_line = $line_counter - 3;
 
 	# report writing to Excel to log
-	$log->debug("Report: wrote $param_href->{map} . '_x_' . $param_href->{term} to $param_href->{outfile}");
+	$log->debug("Report: wrote $param_href->{map}_x_$param_href->{term} to $param_href->{outfile}");
 
     $dbh->disconnect;
 
-	return;
+	return ($start_line, $end_line);
 }
 
 
@@ -1443,14 +1451,19 @@ sub _hypergeometric_test {
 # Usage      : my ($workbook, $log_odds_sheet, $black_bold, $red_bold) = _create_excel($outfile);
 # Purpose    : creates Excel workbook and sheet needed
 # Returns    : $workbook, $log_odds_sheet, $black_bold, $red_bold
-# Parameters : $outfile
+# Parameters : $outfile and $infile
 # Throws     : croaks if wrong number of parameters
 # Comments   : 
 # See Also   : 
 sub _create_excel {
     my $log = Log::Log4perl::get_logger("main");
-    $log->logcroak('_create_excel() needs {$outfile}') unless @_ == 1;
-    my ($outfile) = @_;
+    $log->logcroak('_create_excel() needs {$outfile}') unless @_ == 2;
+    my ($outfile, $infile) = @_;
+
+	# get name of term table
+	my $term_tbl = path($infile)->basename;
+	($term_tbl) = $term_tbl =~ m/\A([^\.]+)\.(.+)\z/;
+	$term_tbl   .= '_term';
 
     # Create a new Excel workbook
 	if (-f $outfile) {
@@ -1459,7 +1472,7 @@ sub _create_excel {
     my $workbook = Excel::Writer::XLSX->new("$outfile") or $log->logcroak( "Problems creating new Excel file: $!" );
 
     # Add a worksheet (log-odds for calculation);
-    my $log_odds_sheet = $workbook->add_worksheet('log_odds_hyper');
+    my $log_odds_sheet = $workbook->add_worksheet("hyper_$term_tbl");
 
     $log->trace( 'Report: Excel file: ',      $outfile );
     $log->trace( 'Report: Excel workbook: ',  $workbook );
@@ -1562,6 +1575,50 @@ sub _retrieve_term_cols {
 }
 
 
+### INTERNAL UTILITY ###
+# Usage      : _add_chart(term => $term_tbl, map => $map_tbl, workbook => $workbook, sheet => $log_odds_sheet, start => $start_line, end => $end_line);
+# Purpose    : inserts chart in log-odds sheet near each map
+# Returns    : nothing
+# Parameters : term => $term_tbl, map => $map_tbl, workbook => $workbook, sheet => $log_odds_sheet, start => $start_line, end => $end_line
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub _add_chart {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_add_chart() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+	#print Dumper($param_href);
+	my $workbook = $param_href->{workbook};
+
+	my $chart = $param_href->{workbook}->add_chart( type => 'line', name => "$param_href->{map}_x_$param_href->{term}", embedded => 1 );   #subtype not available
+	#name => "$param_href->{term} . '_x_' . $param_href->{map}",
+
+	# Configure the chart.
+	$chart->add_series(
+		name       => "$param_href->{map}_x_$param_href->{term}",
+	    categories => "=$param_href->{sheet_name}!A$param_href->{start}:A$param_href->{end}",
+	    values     => "=$param_href->{sheet_name}!I$param_href->{start}:I$param_href->{end}",
+		line       => { color => 'blue', width => 3.25 },
+	);
+
+	# Add a chart title and some axis labels.
+	$chart->set_x_axis( name => 'Phylostrata', visible => 1, label_position => 'low', major_gridlines => { visible => 1 }, position_axis => 'between' );
+	# visible => 0 removes garbage in x_axis
+	$chart->set_y_axis( name => 'Log_odds', major_gridlines => { visible => 1 } );
+ 
+	# Set an Excel chart style. Colors with white outline and shadow.
+	$chart->set_style( 10 );
+	
+	# Display data in hidden rows or columns on the chart.
+	$chart->show_blanks_as( 'zero' );   #gap also possible
+
+	# Insert the chart into the a worksheet.
+	$param_href->{sheet}->insert_chart( "R$param_href->{start}", $chart, 0, 0, 1.5, 1.5 );   #scale by 150%
+
+    return;
+}
+
+
 1;
 __END__
 
@@ -1630,7 +1687,7 @@ Collects phylo summary maps, compares them and writes them to Excel file.
  # options from config
  StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -v
 
-Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel. Input file is term file, relation file is used here to update term file so it can connect to map table. Out is R working directory and outfile is final Excel file.
+Imports multiple maps and connects them with association term, calculates hypergeometric test and writes log-odds, hypergeometric test and charts to Excel. Input file is term file, relation file is used here to update term file so it can connect to map table. Out is R working directory and outfile is final Excel file.
 
 =back
 

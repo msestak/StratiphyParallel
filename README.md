@@ -56,7 +56,7 @@ StratiphyParallel is modulino to run PhyloStrat in parallel, collect information
         # options from config
         StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -v
 
-    Imports multiple maps and connects them with association term, calculates hypergeometric test and writes to Excel. Input file is term file, relation file is used here to update term file so it can connect to map table. Out is R working directory and outfile is final Excel file.
+    Imports multiple maps and connects them with association term, calculates hypergeometric test and writes log-odds, hypergeometric test and charts to Excel. Input file is term file, relation file is used here to update term file so it can connect to map table. Out is R working directory and outfile is final Excel file.
 
 # CONFIGURATION
 
