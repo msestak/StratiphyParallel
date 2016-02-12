@@ -840,6 +840,10 @@ sub multi_maps {
 	# create new Excel workbook that will hold calculations
 	my ($workbook, $log_odds_sheet, $black_bold, $red_bold) = _create_excel($outfile, $infile);
 
+	#create hash to hold all coordinates of start - end lines holding data
+	my %plot_hash;
+
+	my $term_tbl;   # name needed outside loop
 	# foreach map create and load into database (general reusable)
 	foreach my $map (@$sorted_maps_aref) {
 
@@ -847,7 +851,7 @@ sub multi_maps {
 		my $map_tbl = _import_map($in, $map, $dbh);
 	
 		# import one term (specific part)
-		my $term_tbl = _import_term($infile, $dbh, $relation);
+		$term_tbl = _import_term($infile, $dbh, $relation);   #defined outside loop
 	
 		# connect term
 		_update_term_with_map($term_tbl, $map_tbl, $dbh);
@@ -856,10 +860,17 @@ sub multi_maps {
 		my ($start_line, $end_line) = _hypergeometric_test( { term => $term_tbl, map => $map_tbl, sheet => $log_odds_sheet, black_bold => $black_bold, red_bold => $red_bold, %{$param_href} } );
 		say "$start_line-$end_line";
 
+		# collect all coordinates of start and end lines to hash
+		# series name is key, coordinates are value (aref)
+		$plot_hash{"${map_tbl}_x_$term_tbl"} = [$start_line, $end_line];
+
 		# insert chart for each map-term combination near maps
 		_add_chart( { term => $term_tbl, map => $map_tbl, workbook => $workbook, sheet => $log_odds_sheet, sheet_name => "hyper_$term_tbl", start => $start_line, end => $end_line } );
 	
 	}   # end foreach map
+
+	# create chart with all maps on it
+	_chart_all( { plot =>\%plot_hash, workbook => $workbook, sheet_name => "hyper_$term_tbl", term => $term_tbl } );
 
 	# close the Excel file
 	$workbook->close() or $log->logdie( "Error closing Excel file: $!" );
@@ -1448,7 +1459,7 @@ sub _hypergeometric_test {
 
 
 ### INTERNAL UTILITY ###
-# Usage      : my ($workbook, $log_odds_sheet, $black_bold, $red_bold) = _create_excel($outfile);
+# Usage      : my ($workbook, $log_odds_sheet, $black_bold, $red_bold) = _create_excel($outfile, $infile);
 # Purpose    : creates Excel workbook and sheet needed
 # Returns    : $workbook, $log_odds_sheet, $black_bold, $red_bold
 # Parameters : $outfile and $infile
@@ -1474,9 +1485,10 @@ sub _create_excel {
     # Add a worksheet (log-odds for calculation);
     my $log_odds_sheet = $workbook->add_worksheet("hyper_$term_tbl");
 
-    $log->trace( 'Report: Excel file: ',      $outfile );
-    $log->trace( 'Report: Excel workbook: ',  $workbook );
-    $log->trace( 'Report: Excel worksheet: ', $log_odds_sheet );
+    $log->trace( 'Report: Excel file: ',        $outfile );
+    $log->trace( 'Report: Excel workbook: ',    $workbook );
+    $log->trace( 'Report: Excel hyper_sheet: ', $log_odds_sheet );
+    $log->trace( 'Report: Excel chart_sheet: ', $log_odds_sheet );
 
     # Add a Format (bold black)
     my $black_bold = $workbook->add_format(); $black_bold->set_bold(); $black_bold->set_color('black');
@@ -1640,6 +1652,67 @@ sub _configure_chart {
     return;
 }
 
+
+### INTERNAL UTILITY ###
+# Usage      : _chart_all( { plot =>\%plot_hash, workbook => $workbook, sheet_name => "hyper_$term_tbl", term => $term_tbl } );
+# Purpose    : chart all maps on single sheet (and chart)
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub _chart_all {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_chart_all() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+    my %plot_hash = %{ $param_href->{plot} };
+
+	# create a chart (separate sheet)
+	my $chart = $param_href->{workbook}->add_chart( type => 'line', name => "Chart_all_$param_href->{term}", embedded => 0 );
+
+	#	# Configure the chart.
+	#	while (my ($series_name, $pos_aref) = each %{ $param_href->{plot} } ) {
+	#		$chart->add_series(
+	#			name       => "$series_name",
+	#		    categories => "=$param_href->{sheet_name}!A$pos_aref->[0]:A$pos_aref->[1]",
+	#		    values     => "=$param_href->{sheet_name}!I$pos_aref->[0]:I$pos_aref->[1]",
+	#			line       => { width => 3 },
+	#		);
+	#	}
+
+	foreach my $series_name ( map { $_->[0] } sort { $a->[1] <=> $b->[1] } map { [ $_, /\A(?:\D+)(\d+)(?:.+)\z/ ] } keys %plot_hash ) {
+		my $pos_aref = $plot_hash{$series_name};
+		$chart->add_series(
+			name       => "$series_name",
+		    categories => "=$param_href->{sheet_name}!A$pos_aref->[0]:A$pos_aref->[1]",
+		    values     => "=$param_href->{sheet_name}!I$pos_aref->[0]:I$pos_aref->[1]",
+			line       => { width => 3 },
+		);
+	}
+
+
+	# Add a chart title and some axis labels.
+	$chart->set_x_axis( name => 'Phylostrata', visible => 1, label_position => 'low', major_gridlines => { visible => 1 }, position_axis => 'between' );
+	# visible => 0 removes garbage in x_axis
+	$chart->set_y_axis( name => 'Log_odds', major_gridlines => { visible => 1 } );
+ 
+	# Set an Excel chart style. Colors with white outline and shadow.
+	$chart->set_style( 10 );
+	
+	# Display data in hidden rows or columns on the chart.
+	$chart->show_blanks_as( 'zero' );   #gap also possible
+
+	# this method adds Up-Down bars to Line charts to indicate the difference between the first and last data series
+	$chart->set_up_down_bars(
+		up   => { fill => { color => 'green' } },
+		down => { fill => { color => 'red' } },
+	);
+
+	# this method adds Drop Lines to charts to show the Category value of points in the data.
+	$chart->set_drop_lines( line => { color => 'red', dash_type => 'square_dot' } );
+
+    return;
+}
 
 
 
