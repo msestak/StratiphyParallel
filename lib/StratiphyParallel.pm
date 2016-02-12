@@ -563,7 +563,7 @@ sub collect_maps {
 	# Add a Format (green)
     my $green_val = $workbook->add_format(); $green_val->set_color('green');
 	# Add a Format (percentage)
-    my $format_perc = $workbook->add_format(); $format_perc->set_num_format( '0.00%;[Red]-0.00%;0.00%' ); $green_val->set_color('green');
+    my $format_perc = $workbook->add_format(); $format_perc->set_num_format( '0.00%;[Red]-0.00%;0.00%' );
 
     #add a counter for different files and lines
     state $line_counter = 0;
@@ -838,10 +838,14 @@ sub multi_maps {
     my $dbh = _dbi_connect($param_href);
 
 	# create new Excel workbook that will hold calculations
-	my ($workbook, $log_odds_sheet, $black_bold, $red_bold) = _create_excel($outfile, $infile);
+	my ($workbook, $log_odds_sheet, $entropy_sheet, $black_bold, $red_bold) = _create_excel($outfile, $infile);
 
-	#create hash to hold all coordinates of start - end lines holding data
+	# create hash to hold all coordinates of start - end lines holding data
 	my %plot_hash;
+
+	# create hash to hold all real_log_odds and fdr_p_values for entropy analysis (information)
+	my %entropy_hash;
+	my $calc_info_href;
 
 	my $term_tbl;   # name needed outside loop
 	# foreach map create and load into database (general reusable)
@@ -857,12 +861,18 @@ sub multi_maps {
 		_update_term_with_map($term_tbl, $map_tbl, $dbh);
 	
 		# calculate hypergeometric test and print to Excel
-		my ($start_line, $end_line) = _hypergeometric_test( { term => $term_tbl, map => $map_tbl, sheet => $log_odds_sheet, black_bold => $black_bold, red_bold => $red_bold, %{$param_href} } );
+		my ($start_line, $end_line, $phylo_log_cnt_href, $real_log_odd_aref, $fdr_p_value_aref) = _hypergeometric_test( { term => $term_tbl, map => $map_tbl, sheet => $log_odds_sheet, black_bold => $black_bold, red_bold => $red_bold, %{$param_href} } );
 		say "$start_line-$end_line";
 
 		# collect all coordinates of start and end lines to hash
 		# series name is key, coordinates are value (aref)
 		$plot_hash{"${map_tbl}_x_$term_tbl"} = [$start_line, $end_line];
+
+		# collect real_log_odds and FDR_P_value for information calculation
+		$entropy_hash{"${map_tbl}_x_$term_tbl"} = [$real_log_odd_aref, $fdr_p_value_aref];
+
+		# hash ref for _calculate_information() need to persist after loop
+		$calc_info_href = $phylo_log_cnt_href;
 
 		# insert chart for each map-term combination near maps
 		_add_chart( { term => $term_tbl, map => $map_tbl, workbook => $workbook, sheet => $log_odds_sheet, sheet_name => "hyper_$term_tbl", start => $start_line, end => $end_line } );
@@ -871,6 +881,9 @@ sub multi_maps {
 
 	# create chart with all maps on it
 	_chart_all( { plot =>\%plot_hash, workbook => $workbook, sheet_name => "hyper_$term_tbl", term => $term_tbl } );
+
+	# calculate entropy here using %entropy_hash
+	_calculate_information(  { entropy =>\%entropy_hash, phylo_cnt => $calc_info_href, workbook => $workbook, sheet => $entropy_sheet, black_bold => $black_bold, red_bold => $red_bold } );
 
 	# close the Excel file
 	$workbook->close() or $log->logdie( "Error closing Excel file: $!" );
@@ -1352,9 +1365,9 @@ FDR
 }
 
 ### INTERFACE SUB ###
-# Usage      : my ($start_line, $end_line) = _hypergeometric_test( $param_href );
+# Usage      : my ($start_line, $end_line, $phylo_log_cnt_href, $real_log_odd_aref, $fdr_p_value_aref) = _hypergeometric_test( $param_href );
 # Purpose    : creates excel file with log-odds info
-# Returns    : ($start_line, $end_line) of values
+# Returns    : ($start_line, $end_line) of values and (real_log_odds, fdr_p_value) for entropy analysis
 # Parameters : ( $param_href )
 # Throws     : croaks for parameters
 # Comments   : it works on maps (not map_phylo) and requires prot_id in map table
@@ -1377,21 +1390,22 @@ sub _hypergeometric_test {
     $line_counter++;
 
 	$log_odds_sheet->write( $line_counter, 0,  'phylostrata',                                    $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 1,  'Functional term',                                $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 2,  'quant',                                          $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 3,  'sample',                                         $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 4,  'hit',                                            $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 5,  'total',                                          $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 6,  'Odds sample (quant/(sample-quant))',             $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 7,  'Odds rest (hit-quant)/(total-hit-sample+quant)', $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 8,  'Real log-odds',                                  $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 9,  'CDFHyper',                                       $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 10, 'CDFHyperOver',                                   $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 11, 'Raw P_value',                                    $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 12, 'Raw P_value for map',                            $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 13, 'Order',                                          $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 14, 'FDR P_value',                                    $param_href->{black_bold} );
-    $log_odds_sheet->write( $line_counter, 15, 'for map P_value',                                $param_href->{black_bold} );
+	$log_odds_sheet->write( $line_counter, 1,  'phylostrata_name',                               $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 2,  'Functional term',                                $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 3,  'quant',                                          $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 4,  'sample',                                         $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 5,  'hit',                                            $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 6,  'total',                                          $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 7,  'Odds sample (quant/(sample-quant))',             $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 8,  'Odds rest (hit-quant)/(total-hit-sample+quant)', $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 9,  'Real log-odds',                                  $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 10, 'CDFHyper',                                       $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 11, 'CDFHyperOver',                                   $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 12, 'Raw P_value',                                    $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 13, 'Raw P_value for map',                            $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 14, 'Order',                                          $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 15, 'FDR P_value',                                    $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 16, 'for map P_value',                                $param_href->{black_bold} );
 
     #double increment needed because of difference between absolute notation starting at 0
     #and relative notation starting at 1 (0,0 == A1)
@@ -1401,7 +1415,7 @@ sub _hypergeometric_test {
 	my $start_line = $line_counter;
 
 	# retrieve columns from map table
-	my ($phylo_aref, $sample_aref, $total_aref) = _retrieve_map_cols($param_href->{map}, $dbh);
+	my ($phylo_aref, $ps_name_aref, $sample_aref, $total_aref) = _retrieve_map_cols($param_href->{map}, $dbh);
 
 	#get functional term column
 	my $phylostrata = scalar @$phylo_aref;
@@ -1409,16 +1423,17 @@ sub _hypergeometric_test {
 
     #writa a table in one go (oxhos missing values so this doesn't work)
     $log_odds_sheet->write_col( "A$line_counter", $phylo_aref );
-    $log_odds_sheet->write_col( "B$line_counter", \@term );
-    $log_odds_sheet->write_col( "D$line_counter", $sample_aref );
-    $log_odds_sheet->write_col( "F$line_counter", $total_aref );
+    $log_odds_sheet->write_col( "B$line_counter", $ps_name_aref );
+    $log_odds_sheet->write_col( "C$line_counter", \@term );
+    $log_odds_sheet->write_col( "E$line_counter", $sample_aref );
+    $log_odds_sheet->write_col( "G$line_counter", $total_aref );
 
 	# retrieve columns from term table
 	my ($quant_aref, $hit_aref) = _retrieve_term_cols($param_href->{term}, $phylo_aref, $dbh);
 
     #write oxphos values
-    $log_odds_sheet->write_col( "C$line_counter", $quant_aref );
-    $log_odds_sheet->write_col( "E$line_counter", $hit_aref);
+    $log_odds_sheet->write_col( "D$line_counter", $quant_aref );
+    $log_odds_sheet->write_col( "F$line_counter", $hit_aref);
 
     #get rest of values from R using Statistics::R
     my ($exit_href) = _calculate_in_R(
@@ -1433,16 +1448,16 @@ sub _hypergeometric_test {
       );
 
     #write calculated values from R to excel
-    $log_odds_sheet->write_col( "G$line_counter", $exit_href->{odds_sample} );
-    $log_odds_sheet->write_col( "H$line_counter", $exit_href->{odds_rest} );
-    $log_odds_sheet->write_col( "I$line_counter", $exit_href->{real_log_odds} );
-    $log_odds_sheet->write_col( "J$line_counter", $exit_href->{cdfhyper} );
-    $log_odds_sheet->write_col( "K$line_counter", $exit_href->{cdfhyperover} );
-    $log_odds_sheet->write_col( "L$line_counter", $exit_href->{raw_p_value} );
-    $log_odds_sheet->write_col( "M$line_counter", $exit_href->{raw_p_value_map} );
-    $log_odds_sheet->write_col( "N$line_counter", $exit_href->{niz} );
-    $log_odds_sheet->write_col( "O$line_counter", $exit_href->{fdr_p_value} );
-    $log_odds_sheet->write_col( "P$line_counter", $exit_href->{for_map_p_value} );
+    $log_odds_sheet->write_col( "H$line_counter", $exit_href->{odds_sample} );
+    $log_odds_sheet->write_col( "I$line_counter", $exit_href->{odds_rest} );
+    $log_odds_sheet->write_col( "J$line_counter", $exit_href->{real_log_odds} );
+    $log_odds_sheet->write_col( "K$line_counter", $exit_href->{cdfhyper} );
+    $log_odds_sheet->write_col( "L$line_counter", $exit_href->{cdfhyperover} );
+    $log_odds_sheet->write_col( "M$line_counter", $exit_href->{raw_p_value} );
+    $log_odds_sheet->write_col( "N$line_counter", $exit_href->{raw_p_value_map} );
+    $log_odds_sheet->write_col( "O$line_counter", $exit_href->{niz} );
+    $log_odds_sheet->write_col( "P$line_counter", $exit_href->{fdr_p_value} );
+    $log_odds_sheet->write_col( "Q$line_counter", $exit_href->{for_map_p_value} );
 
     #increment for number of phylostrata to make space for next map (file)
     $line_counter += $phylostrata + 2;
@@ -1452,14 +1467,35 @@ sub _hypergeometric_test {
 	# report writing to Excel to log
 	$log->debug("Report: wrote $param_href->{map}_x_$param_href->{term} to $param_href->{outfile}");
 
+	# produce phylo => log_odd temp hash
+	my %phylo_log_odds;
+	@phylo_log_odds{@$phylo_aref} = @{ $exit_href->{real_log_odds} };
+
+	# produce phylo => [up, zero, down] permanent hash
+	state %phylo_log_cnt;
+	foreach my $ps ( keys %phylo_log_odds ) {
+		no warnings 'uninitialized';
+		my ($up, $zero, $down) = (0, 0, 0);
+		if ( ($phylo_log_odds{$ps} eq '-Inf') or ($phylo_log_odds{$ps} == 0) or ($phylo_log_odds{$ps} =~ m/#/) ) {
+			$zero++;
+		}
+		elsif ($phylo_log_odds{$ps} > 0) {
+			$up++;
+		}
+		elsif ($phylo_log_odds{$ps} < 0) {
+			$down++;
+		}
+		$phylo_log_cnt{$ps} = [$phylo_log_cnt{$ps}->[0] + $up, $phylo_log_cnt{$ps}->[1] + $zero, $phylo_log_cnt{$ps}->[2] + $down];
+	}
+
     $dbh->disconnect;
 
-	return ($start_line, $end_line);
+	return ($start_line, $end_line, \%phylo_log_cnt, $exit_href->{real_log_odds}, $exit_href->{fdr_p_value} );
 }
 
 
 ### INTERNAL UTILITY ###
-# Usage      : my ($workbook, $log_odds_sheet, $black_bold, $red_bold) = _create_excel($outfile, $infile);
+# Usage      : my ($workbook, $log_odds_sheet, $entropy_sheet, $black_bold, $red_bold) = _create_excel($outfile, $infile);
 # Purpose    : creates Excel workbook and sheet needed
 # Returns    : $workbook, $log_odds_sheet, $black_bold, $red_bold
 # Parameters : $outfile and $infile
@@ -1484,23 +1520,24 @@ sub _create_excel {
 
     # Add a worksheet (log-odds for calculation);
     my $log_odds_sheet = $workbook->add_worksheet("hyper_$term_tbl");
+    my $entropy_sheet = $workbook->add_worksheet("info_$term_tbl");
 
-    $log->trace( 'Report: Excel file: ',        $outfile );
-    $log->trace( 'Report: Excel workbook: ',    $workbook );
-    $log->trace( 'Report: Excel hyper_sheet: ', $log_odds_sheet );
-    $log->trace( 'Report: Excel chart_sheet: ', $log_odds_sheet );
+    $log->trace( 'Report: Excel file: ',          $outfile );
+    $log->trace( 'Report: Excel workbook: ',      $workbook );
+    $log->trace( 'Report: Excel hyper_sheet: ',   $log_odds_sheet );
+    $log->trace( 'Report: Excel entropy_sheet: ', $entropy_sheet );
 
     # Add a Format (bold black)
     my $black_bold = $workbook->add_format(); $black_bold->set_bold(); $black_bold->set_color('black');
     # Add a Format (bold red)
     my $red_bold = $workbook->add_format(); $red_bold->set_bold(); $red_bold->set_color('red'); 
 
-    return ($workbook, $log_odds_sheet, $black_bold, $red_bold);
+    return ($workbook, $log_odds_sheet, $entropy_sheet, $black_bold, $red_bold);
 }
 
 
 ### INTERNAL UTILITY ###
-# Usage      : my ($phylo_aref, $sample_aref, $total_aref) = _retrieve_map_cols($param_href{map}, $dbh);
+# Usage      : my ($phylo_aref, $ps_name_aref, $sample_aref, $total_aref) = _retrieve_map_cols($param_href{map}, $dbh);
 # Purpose    : retrieves columns from map table for hypergeometric test later
 # Returns    : phylo, sample and total arefs
 # Parameters : map table name + database handle
@@ -1514,15 +1551,16 @@ sub _retrieve_map_cols {
 
     #prepare the SELECT statement for full ps table
     my $statement_ps = sprintf( qq{
-    SELECT phylostrata, COUNT(phylostrata) AS genes
+    SELECT phylostrata, COUNT(phylostrata) AS genes, species_name
     FROM %s
     GROUP BY phylostrata
     ORDER BY phylostrata
 	}, $dbh->quote_identifier($map_tbl) );
 
     # map filters the column from bi-dimensional array
-    my @phylo = map { $_->[0] } @{ $dbh->selectall_arrayref($statement_ps) };
-    my @sample = map { $_->[1] } @{ $dbh->selectall_arrayref($statement_ps) };
+    my @phylo   = map { $_->[0] } @{ $dbh->selectall_arrayref($statement_ps) };
+    my @sample  = map { $_->[1] } @{ $dbh->selectall_arrayref($statement_ps) };
+    my @ps_name = map { $_->[2] } @{ $dbh->selectall_arrayref($statement_ps) };
     $log->trace( 'Returned phylostrata: {', join('}{', @phylo), '}' );
  
     #calculate total from @col_genes;
@@ -1530,7 +1568,7 @@ sub _retrieve_map_cols {
 	my $phylostrata = scalar @phylo;
     my @totals = ($total) x $phylostrata;
 
-    return (\@phylo, \@sample, \@totals);
+    return (\@phylo, \@ps_name, \@sample, \@totals);
 }
 
 
@@ -1610,7 +1648,7 @@ sub _add_chart {
 	}
 
 	# Insert the chart into the a worksheet. (second one will be printed on separate sheet automatically)
-	$param_href->{sheet}->insert_chart( "R$param_href->{start}", $chart_emb, 0, 0, 1.5, 1.5 );   #scale by 150%
+	$param_href->{sheet}->insert_chart( "S$param_href->{start}", $chart_emb, 0, 0, 1.5, 1.5 );   #scale by 150%
 
     return;
 }
@@ -1634,7 +1672,7 @@ sub _configure_chart {
 	$chart->add_series(
 		name       => "$param_href->{map}_x_$param_href->{term}",
 	    categories => "=$param_href->{sheet_name}!A$param_href->{start}:A$param_href->{end}",
-	    values     => "=$param_href->{sheet_name}!I$param_href->{start}:I$param_href->{end}",
+	    values     => "=$param_href->{sheet_name}!J$param_href->{start}:J$param_href->{end}",
 		line       => { color => 'blue', width => 3.25 },
 	);
 
@@ -1685,7 +1723,7 @@ sub _chart_all {
 		$chart->add_series(
 			name       => "$series_name",
 		    categories => "=$param_href->{sheet_name}!A$pos_aref->[0]:A$pos_aref->[1]",
-		    values     => "=$param_href->{sheet_name}!I$pos_aref->[0]:I$pos_aref->[1]",
+		    values     => "=$param_href->{sheet_name}!J$pos_aref->[0]:J$pos_aref->[1]",
 			line       => { width => 3 },
 		);
 	}
@@ -1715,6 +1753,146 @@ sub _chart_all {
 
     return;
 }
+
+
+### INTERNAL UTILITY ###
+# Usage      : _calculate_information( { entropy =>\%entropy_hash, phylo_cnt => $phylo_log_cnt_href, workbook => $workbook, sheet => $entropy_sheet, black_bold => $black_bold, red_bold => $red_bold } );
+# Purpose    : calculates information per map and prints to Excel
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub _calculate_information {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_calculate_information() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+    my %entropy_hash = %{ $param_href->{entropy} };
+	my %phylo_log_cnt_copy = %{ $param_href->{phylo_cnt} };
+
+	# calculate information per map
+	my %info_hash;
+	my %sum_info_hash;
+	my %ps_log_hash;
+	foreach my $map_name ( map { $_->[0] } sort { $a->[1] <=> $b->[1] } map { [ $_, /\A(?:\D+)(\d+)(?:.+)\z/ ] } keys %entropy_hash ) {
+		my $aref = $entropy_hash{$map_name};
+
+		# information content per map
+		my $info_content = 0;
+		foreach my $e_value ( @{ $aref->[1] } ) {
+			if ($e_value < 0.05) {
+				$info_content++;
+			}
+		}
+		$info_hash{$map_name} = $info_content;
+
+		# log_odds per map
+		my ($up, $zero, $down) = (0, 0, 0);
+		foreach my $log_odd ( @{ $aref->[0] } ) {
+			if ( ($log_odd eq '-Inf') or ($log_odd == 0) or ($log_odd =~ m/#/) ) {
+				$zero++;
+			}
+			elsif ($log_odd > 0) {
+				$up++;
+			}
+			elsif ($log_odd < 0) {
+				$down++;
+			}
+		}
+		$sum_info_hash{$map_name} = [$up, $zero, $down];
+	}
+
+	# print to Excel info_term sheet
+	my $line_cnt=0;
+    $param_href->{sheet}->write( $line_cnt, 0, "INFORMATION CONTENT PER MAP", $param_href->{red_bold} );
+    $line_cnt++;
+	$param_href->{sheet}->write( $line_cnt, 0,  'Map_term',            $param_href->{black_bold} );
+	$param_href->{sheet}->write( $line_cnt, 1,  'Information_content', $param_href->{black_bold} );
+	$param_href->{sheet}->write( $line_cnt, 2,  'Log_odds_UP',         $param_href->{black_bold} );
+	$param_href->{sheet}->write( $line_cnt, 3,  'Log_odds_ZERO',       $param_href->{black_bold} );
+	$param_href->{sheet}->write( $line_cnt, 4,  'Log_odds_DOWN',       $param_href->{black_bold} );
+    $line_cnt += 2;   # to relative notation
+
+	# information content
+	foreach my $map_name ( map { $_->[0] } sort { $a->[1] <=> $b->[1] } map { [ $_, /\A(?:\D+)(\d+)(?:.+)\z/ ] } keys %info_hash ) {
+		$param_href->{sheet}->write( "A$line_cnt", $map_name );
+		$param_href->{sheet}->write( "B$line_cnt", $info_hash{$map_name} );
+		$line_cnt++;
+	}
+
+	# log_odds per map
+	$line_cnt = 3;   #return to first line of column
+	foreach my $map_name ( map { $_->[0] } sort { $a->[1] <=> $b->[1] } map { [ $_, /\A(?:\D+)(\d+)(?:.+)\z/ ] } keys %sum_info_hash ) {
+		$param_href->{sheet}->write( "C$line_cnt", $sum_info_hash{$map_name}->[0] );
+		$param_href->{sheet}->write( "D$line_cnt", $sum_info_hash{$map_name}->[1] );
+		$param_href->{sheet}->write( "E$line_cnt", $sum_info_hash{$map_name}->[2] );
+		$line_cnt++;
+	}
+    $line_cnt += 2;
+
+	# cumulative information per phylostrata
+	$param_href->{sheet}->write( $line_cnt, 0,  'Phylostrata',   $param_href->{black_bold} );
+	$param_href->{sheet}->write( $line_cnt, 1,  'Log_odds_UP',   $param_href->{black_bold} );
+	$param_href->{sheet}->write( $line_cnt, 2,  'Log_odds_ZERO', $param_href->{black_bold} );
+	$param_href->{sheet}->write( $line_cnt, 3,  'Log_odds_DOWN', $param_href->{black_bold} );
+	$param_href->{sheet}->write( $line_cnt, 4,  'Ratio_per_ps',  $param_href->{black_bold} );
+	$param_href->{sheet}->write( $line_cnt, 5,  'ps_plus_ratio', $param_href->{black_bold} );
+    $line_cnt += 2;   # to relative notation
+
+	my $phylostrata = scalar keys %phylo_log_cnt_copy;
+	my $ratio_sum;
+	foreach my $ps ( sort { $a <=> $b } keys %phylo_log_cnt_copy ) {
+		my $up = $phylo_log_cnt_copy{$ps}->[0];
+		my $zero = $phylo_log_cnt_copy{$ps}->[1];
+		my $down = $phylo_log_cnt_copy{$ps}->[2];
+		$param_href->{sheet}->write( "A$line_cnt", $ps );
+		$param_href->{sheet}->write( "B$line_cnt", $up );
+		$param_href->{sheet}->write( "C$line_cnt", $zero );
+		$param_href->{sheet}->write( "D$line_cnt", $down );
+		my $ratio = $up/$phylostrata * log2($up/$phylostrata)
+		  + $zero/$phylostrata * log2($zero/$phylostrata)
+		  + $down/$phylostrata * log2($down/$phylostrata);
+		$param_href->{sheet}->write( "E$line_cnt", $ratio );
+		$ratio_sum += $ratio;
+		$line_cnt++;
+	}
+	$param_href->{sheet}->write( "D$line_cnt", "Ratio_sum", $param_href->{black_bold} );
+	$param_href->{sheet}->write( "E$line_cnt", $ratio_sum,  $param_href->{black_bold} );
+
+	# calculate real information
+	$line_cnt++;
+	my $information = $phylostrata + $ratio_sum;
+	$param_href->{sheet}->write( "D$line_cnt", "Information", $param_href->{black_bold} );
+	$param_href->{sheet}->write( "E$line_cnt", $information,  $param_href->{black_bold} );
+
+	# calculate relative information
+	$line_cnt++;
+	my $information_rel = $information/$phylostrata;
+	$param_href->{sheet}->write( "D$line_cnt", "Info_rel",        $param_href->{red_bold} );
+	# Add a Format (percentage)
+    my $format_perc = $param_href->{workbook}->add_format(); $format_perc->set_num_format( '[Red]0.00%;[Red]-0.00%;0.00%' ); $format_perc->set_bold();
+	$param_href->{sheet}->write( "E$line_cnt", $information_rel,  $format_perc );
+
+    return;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : log2($zero/$phylostrata)
+# Purpose    : calculates log po bazi 2
+# Returns    : log po bazi 2
+# Parameters : number
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub log2 {
+	my $n = shift;
+	if ($n == 0) {
+		return 0;
+	}
+    return log($n)/log(2);
+}
+
 
 
 
