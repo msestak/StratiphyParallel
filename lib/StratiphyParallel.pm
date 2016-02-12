@@ -1702,18 +1702,19 @@ sub _chart_all {
 	# Display data in hidden rows or columns on the chart.
 	$chart->show_blanks_as( 'zero' );   #gap also possible
 
-	# this method adds Up-Down bars to Line charts to indicate the difference between the first and last data series
-	$chart->set_up_down_bars(
-		up   => { fill => { color => 'green' } },
-		down => { fill => { color => 'red' } },
-	);
+	#	# this method adds Up-Down bars to Line charts to indicate the difference between the first and last data series
+	#	$chart->set_up_down_bars(
+	#		up   => { fill => { color => 'green' } },
+	#		down => { fill => { color => 'red' } },
+	#	);
+	#
+	#	# this method adds Drop Lines to charts to show the Category value of points in the data.
+	#	$chart->set_high_low_lines( line => { color => 'red', dash_type => 'square_dot' } );
 
-	# this method adds Drop Lines to charts to show the Category value of points in the data.
-	$chart->set_drop_lines( line => { color => 'red', dash_type => 'square_dot' } );
+
 
     return;
 }
-
 
 
 
