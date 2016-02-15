@@ -519,18 +519,10 @@ sub collect_maps {
 	my $outfile = $param_href->{outfile} or $log->logcroak( 'no $outfile specified on command line!' );
 
 	# collect map summary files from IN
-	my @maps = File::Find::Rule->file()
-                               ->name( '*.phmap_sum' )
-                               ->in( $in );
-	my @sorted_maps =
-    map { $_->[0] }                                 #returns back to file path format
-    sort { $a->[1] <=> $b->[1] }                    #compares numbers at second place in aref
-    map { [ $_, /\A(?:\D+)(\d+)\.phmap_sum\z/ ] }   #puts number at second place of aref
-    @maps;
-    $log->trace( 'Array @sorted_maps (files in input directory sorted): ', "\n", join("\n", @sorted_maps) );
+	my $sorted_maps_aref = _sorted_files_in( $in, 'phmap_sum' );
 
 	# count number of lines in map and extract phylostrata
-	my $test_map = $sorted_maps[0];
+	my $test_map = $sorted_maps_aref->[0];
 	my ($test_phylostrata, $test_tax_id, $test_phylostrata_name) = _test_map($test_map);
 	my @test_phylostrata = @$test_phylostrata;
 	my $lines = @test_phylostrata;
@@ -542,51 +534,33 @@ sub collect_maps {
 	my $diff_end   = $lines + $diff_start;   #num of lines in file + 3
 
     # Create a new Excel workbook
-	# !!! $filename_excel needs to be doubleQUOTED else it does not WORK (->new("$filename_excel"))
-	if (-f $outfile) {
-		unlink $outfile and $log->warn( "Action: unlinked $outfile" );
-	}
-    my $workbook = Excel::Writer::XLSX->new("$outfile") or $log->logcroak( "Problems creating new Excel file: $!" );
-
-    # Add a worksheet which will hold all of the maps (DATA for maps)
-	my $ps_sheet       = $workbook->add_worksheet('DATA');
-    $log->debug( 'Excel file: ',      $outfile );
-    $log->debug( 'Excel workbook: ',  $workbook );
-	$log->debug( 'Excel worksheet: ', $ps_sheet );
-
-    # Add a Format (bold black)
-    my $header = $workbook->add_format(); $header->set_bold(); $header->set_color('black');
-    # Add a Format (bold red)
-    my $red = $workbook->add_format(); $red->set_bold(); $red->set_color('red'); 
-	# Add a Format (red)
-    my $red_val = $workbook->add_format(); $red_val->set_color('red');
-	# Add a Format (green)
-    my $green_val = $workbook->add_format(); $green_val->set_color('green');
-	# Add a Format (percentage)
-    my $format_perc = $workbook->add_format(); $format_perc->set_num_format( '0.00%;[Red]-0.00%;0.00%' );
+	my $excel_href = _create_excel_for_collect_maps($outfile);
 
     #add a counter for different files and lines
     state $line_counter = 0;
 
 	# run for each map
-	foreach my $map (@sorted_maps) {
+	foreach my $map (@$sorted_maps_aref) {
 
 		#skip non-uniform maps
 		next if $map =~ /2014|2015|2016|2017/;
 
 		# Add a caption to each worksheet (with name of map)
-		my $map_name = path($map)->basename;
-    	$ps_sheet->write( $line_counter, 0, $map_name, $red );
+		my $map_sum = path($map)->basename;
+		my ($map_name) = $map_sum =~ m/\A([^\.]+)\./;
+		$map_name .= '_map';
+
+    	$excel_href->{sheet}->write( $line_counter, 0, $map_name, $excel_href->{red_bold} );
     	$line_counter++;
 
 		# here comes header
-		$ps_sheet->write( $line_counter, 0,  'phylostrata',      $header );
-    	$ps_sheet->write( $line_counter, 1,  'tax_id',           $header );
-    	$ps_sheet->write( $line_counter, 2,  'phylostrata_name', $header );
-    	$ps_sheet->write( $line_counter, 3,  'genes',            $header );
-    	$ps_sheet->write( $line_counter, 4,  '% of genes',       $header );
-    	$ps_sheet->write( $line_counter, 5,  'diff in num',      $header );
-    	$ps_sheet->write( $line_counter, 6,  'diff in %',        $header );
+		$excel_href->{sheet}->write( $line_counter, 0,  'phylostrata',      $excel_href->{black_bold} );
+    	$excel_href->{sheet}->write( $line_counter, 1,  'tax_id',           $excel_href->{black_bold} );
+    	$excel_href->{sheet}->write( $line_counter, 2,  'phylostrata_name', $excel_href->{black_bold} );
+    	$excel_href->{sheet}->write( $line_counter, 3,  'genes',            $excel_href->{black_bold} );
+    	$excel_href->{sheet}->write( $line_counter, 4,  '% of genes',       $excel_href->{black_bold} );
+    	$excel_href->{sheet}->write( $line_counter, 5,  'diff in num',      $excel_href->{black_bold} );
+    	$excel_href->{sheet}->write( $line_counter, 6,  'diff in %',        $excel_href->{black_bold} );
 
     	#using absolute notation (0,0 == A1)
     	$line_counter++;
@@ -613,8 +587,8 @@ sub collect_maps {
 				#say $tmp_cnt_here;
 				my $tmp_cnt_diff = $diff_start + $local_cnt -1 ;
 				#say $tmp_cnt_diff;
-				#$ps_sheet->write_formula( $tmp_cnt_here - 1, 5, "{=D$tmp_cnt_here - D$tmp_cnt_diff}" );
-				$ps_sheet->write_formula( $tmp_cnt_here - 1, 6, "{=E$tmp_cnt_here - E$tmp_cnt_diff}", $format_perc );
+				#$excel_href->{sheet}->write_formula( $tmp_cnt_here - 1, 5, "{=D$tmp_cnt_here - D$tmp_cnt_diff}" );
+				$excel_href->{sheet}->write_formula( $tmp_cnt_here - 1, 6, "{=E$tmp_cnt_here - E$tmp_cnt_diff}", $excel_href->{perc} );
 			}   #end while reading file
 
 			my @phylostrata = @{ $HoA_columns_as_arrays{ $col_names[0] } };
@@ -629,14 +603,14 @@ sub collect_maps {
 				$log->trace("Report: phylostrata match for $map");
 
 				$line_counter++;   #relative notation
-				$ps_sheet->write_col( "A$line_counter", \@phylostrata );
-				$ps_sheet->write_col( "B$line_counter", \@tax_id );
-				$ps_sheet->write_col( "C$line_counter", \@phylostrata_name );
-				$ps_sheet->write_col( "D$line_counter", \@genes );
-				$ps_sheet->write_col( "E$line_counter", \@perc_of_genes );
+				$excel_href->{sheet}->write_col( "A$line_counter", \@phylostrata );
+				$excel_href->{sheet}->write_col( "B$line_counter", \@tax_id );
+				$excel_href->{sheet}->write_col( "C$line_counter", \@phylostrata_name );
+				$excel_href->{sheet}->write_col( "D$line_counter", \@genes );
+				$excel_href->{sheet}->write_col( "E$line_counter", \@perc_of_genes );
 				my $end = $line_counter + @phylostrata;
-				$ps_sheet->write_array_formula( "F$line_counter:F$end",    "{=(D$line_counter:D$end - D$diff_start:D$diff_end)}" );
-				#$ps_sheet->write_array_formula( "G$line_counter:G$end",    "{=(E$line_counter:E$end - E$diff_start:E$diff_end)}", $format_perc );
+				$excel_href->{sheet}->write_array_formula( "F$line_counter:F$end",    "{=(D$line_counter:D$end - D$diff_start:D$diff_end)}" );
+				#$excel_href->{sheet}->write_array_formula( "G$line_counter:G$end",    "{=(E$line_counter:E$end - E$diff_start:E$diff_end)}", $format_perc );
 				#print Dumper(\%HoA_columns_as_arrays);
 			}
 			else {
@@ -657,13 +631,13 @@ sub collect_maps {
 
 				#print to Excel
 				$line_counter++;   #relative notation
-				$ps_sheet->write_col( "A$line_counter", $new_phylostrata_aref );
-				$ps_sheet->write_col( "B$line_counter", \@tax_id );
-				$ps_sheet->write_col( "C$line_counter", \@phylostrata_name );
-				$ps_sheet->write_col( "D$line_counter", \@genes );
-				$ps_sheet->write_col( "E$line_counter", \@perc_of_genes );
+				$excel_href->{sheet}->write_col( "A$line_counter", $new_phylostrata_aref );
+				$excel_href->{sheet}->write_col( "B$line_counter", \@tax_id );
+				$excel_href->{sheet}->write_col( "C$line_counter", \@phylostrata_name );
+				$excel_href->{sheet}->write_col( "D$line_counter", \@genes );
+				$excel_href->{sheet}->write_col( "E$line_counter", \@perc_of_genes );
 				my $end = $line_counter + @$new_phylostrata_aref;
-				$ps_sheet->write_array_formula( "F$line_counter:F$end",    "{=(D$line_counter:D$end - D$diff_start:D$diff_end)}" );
+				$excel_href->{sheet}->write_array_formula( "F$line_counter:F$end",    "{=(D$line_counter:D$end - D$diff_start:D$diff_end)}" );
 
 				#increase line_counter for number of indexes
 				$line_counter += scalar @$empty_index_aref;
@@ -672,38 +646,50 @@ sub collect_maps {
 			# calculate sum of genes
 			$line_counter += $. - 1;  # for length of file
 			my $sum_end = $line_counter;
-			$ps_sheet->write_formula( $line_counter, 3, "{=SUM(D$sum_start:D$sum_end)}" );   #curly braces to write result to Excel
+			$excel_href->{sheet}->write_formula( $line_counter, 3, "{=SUM(D$sum_start:D$sum_end)}" );   #curly braces to write result to Excel
 
-			# write more genes in green and less in red
+			#write percentage
+			my $end = $sum_end + 1;
+			foreach my $i ($sum_start .. $sum_end) {
+				say "$i";
+				$excel_href->{sheet}->write_formula( "E$i", "{=D$i/D$end}" );
+			}
+
+			# write positive genes in green and negative in red
 			# Write a conditional format over a range.
-			$ps_sheet->conditional_formatting( "F$sum_start:F$sum_end",
+			$excel_href->{sheet}->conditional_formatting( "F$sum_start:F$sum_end",
 			    {
 			        type     => 'cell',
 			        criteria => '>',
 			        value    => 0,
-			        format   => $green_val,
+			        format   => $excel_href->{green},
 			    }
 			);
  
 			# Write another conditional format over the same range.
-			$ps_sheet->conditional_formatting( "F$sum_start:F$sum_end",
+			$excel_href->{sheet}->conditional_formatting( "F$sum_start:F$sum_end",
 			    {
 			        type     => 'cell',
 			        criteria => '<',
 			        value    => 0,
-			        format   => $red_val,
+			        format   => $excel_href->{red},
 			    }
 			);
 	
 			# write conditional format for percentage
-			$ps_sheet->conditional_formatting( "G$sum_start:G$sum_end",
+			$excel_href->{sheet}->conditional_formatting( "G$sum_start:G$sum_end",
 			    {
 			        type     => 'cell',
 			        criteria => '>',
 			        value    => 0,
-			        format   => $green_val,
+			        format   => $excel_href->{green},
 			    }
 			);
+
+			# insert chart for each map near maps
+			_add_bare_map_chart( { map => $map_name, workbook => $excel_href->{workbook}, sheet => $excel_href->{sheet}, sheet_name => "MAPS", start => $sum_start, end => $sum_end } );
+	
+
 
 			# make space for next map
 			$line_counter += 2;      # +2 for next map name
@@ -711,11 +697,10 @@ sub collect_maps {
 		}   #end local $.
 	}   # end foreach map
 
-	$workbook->close() or $log->logdie( "Error closing Excel file: $!" );
+	$excel_href->{workbook}->close() or $log->logdie( "Error closing Excel file: $!" );
 
 	return;
 }
-
 
 
 ### INTERNAL UTILITY ###
@@ -1891,6 +1876,112 @@ sub log2 {
 		return 0;
 	}
     return log($n)/log(2);
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : my ($excel_href) = _create_excel_for_collect_maps($outfile);
+# Purpose    : creates Excel workbook and sheet needed for --mode=collect_maps
+# Returns    : workbook, sheet and formats
+# Parameters : $outfile
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : --mode=collect_maps
+sub _create_excel_for_collect_maps {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_create_excel_for_collect_maps() needs {$outfile}') unless @_ == 1;
+    my ($outfile) = @_;
+
+    # Create a new Excel workbook
+	if (-f $outfile) {
+		unlink $outfile and $log->warn( "Action: unlinked Excel $outfile" );
+	}
+    my $workbook = Excel::Writer::XLSX->new("$outfile") or $log->logcroak( "Problems creating new Excel file: $!" );
+
+    # Add a worksheet (log-odds for calculation);
+    my $maps_sheet = $workbook->add_worksheet("MAPS");
+    $log->trace( 'Report: Excel file: ',          $outfile );
+    $log->trace( 'Report: Excel workbook: ',      $workbook );
+    $log->trace( 'Report: Excel MAPS_sheet: ',    $maps_sheet );
+
+    # Add a Format (bold black)
+    my $black_bold = $workbook->add_format(); $black_bold->set_bold(); $black_bold->set_color('black');
+    # Add a Format (bold red)
+    my $red_bold = $workbook->add_format(); $red_bold->set_bold(); $red_bold->set_color('red'); 
+	# Add a Format (red)
+    my $red_val = $workbook->add_format(); $red_val->set_color('red');
+	# Add a Format (green)
+    my $green_val = $workbook->add_format(); $green_val->set_color('green');
+	# Add a Format (percentage)
+    my $format_perc = $workbook->add_format(); $format_perc->set_num_format( '0.00%;[Red]-0.00%;0.00%' );
+
+    return ( { workbook => $workbook, sheet => $maps_sheet, black_bold => $black_bold, red_bold => $red_bold, red => $red_val, green => $green_val, perc => $format_perc } );
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : _add_bare_map_chart( { map => $map_name, workbook => $workbook, sheet => $excel_href->{sheet}, sheet_name => "MAPS", start => $sum_start, end => $sum_end } );
+# Purpose    : inserts chart in MAPS sheet near each map
+# Returns    : nothing
+# Parameters : Excel related
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   :--mode=collect_maps
+sub _add_bare_map_chart {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_add_bare_map_chart() needs a $param_href') unless @_ == 1;
+    my ($chart_href) = @_;
+
+	# create 2 charts: one that will be embeded to MAPS sheet and second on separate sheet
+	my $chart_single = $chart_href->{workbook}->add_chart( type => 'line', name => "$chart_href->{map}", embedded => 0 );   #subtype not available
+	my $chart_emb    = $chart_href->{workbook}->add_chart( type => 'line', name => "$chart_href->{map}", embedded => 1 );   #subtype not available
+
+	# configure both charts the same
+	foreach my $chart ($chart_single, $chart_emb) {
+		_configure_chart_for_collect_maps( {chart => $chart, %{$chart_href} } );
+	}
+
+	# Insert the chart into the worksheet. (second one will be printed on separate sheet automatically)
+	$chart_href->{sheet}->insert_chart( "I$chart_href->{start}", $chart_emb, 0, 0, 1.5, 1.5 );   #scale by 150%
+
+    return;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : _configure_chart_for_collect_maps($chart);
+# Purpose    : run configuration step for all charts
+# Returns    : nothing
+# Parameters : $param_href with chart object to configure
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub _configure_chart_for_collect_maps {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_configure_chart_for_collect_maps() needs $chart_href}') unless @_ == 1;
+    my ($chart_href) = @_;
+	my $chart = $chart_href->{chart};
+
+	# Configure the chart.
+	$chart->add_series(
+		name       => "$chart_href->{map}",
+	    categories => "=$chart_href->{sheet_name}!A$chart_href->{start}:A$chart_href->{end}",
+	    values     => "=$chart_href->{sheet_name}!E$chart_href->{start}:E$chart_href->{end}",
+		line       => { color => 'blue', width => 3.25 },
+	);
+
+	# Add a chart title and some axis labels.
+	$chart->set_x_axis( name => 'Phylostrata', visible => 1, label_position => 'low', major_gridlines => { visible => 1 }, position_axis => 'between' );
+	# visible => 0 removes garbage in x_axis
+	$chart->set_y_axis( name => '% of genes per phylostrata', major_gridlines => { visible => 1 } );
+ 
+	# Set an Excel chart style. Colors with white outline and shadow.
+	$chart->set_style( 10 );
+	
+	# Display data in hidden rows or columns on the chart.
+	$chart->show_blanks_as( 'zero' );   #gap also possible
+
+    return;
 }
 
 
