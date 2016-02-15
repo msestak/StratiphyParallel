@@ -536,6 +536,9 @@ sub collect_maps {
     # Create a new Excel workbook
 	my $excel_href = _create_excel_for_collect_maps($outfile);
 
+	# create hash to hold all coordinates of start - end lines holding data
+	my %plot_hash;
+
     #add a counter for different files and lines
     state $line_counter = 0;
 
@@ -635,7 +638,7 @@ sub collect_maps {
 				$excel_href->{sheet}->write_col( "B$line_counter", \@tax_id );
 				$excel_href->{sheet}->write_col( "C$line_counter", \@phylostrata_name );
 				$excel_href->{sheet}->write_col( "D$line_counter", \@genes );
-				$excel_href->{sheet}->write_col( "E$line_counter", \@perc_of_genes );
+				#$excel_href->{sheet}->write_col( "E$line_counter", \@perc_of_genes );
 				my $end = $line_counter + @$new_phylostrata_aref;
 				$excel_href->{sheet}->write_array_formula( "F$line_counter:F$end",    "{=(D$line_counter:D$end - D$diff_start:D$diff_end)}" );
 
@@ -648,12 +651,14 @@ sub collect_maps {
 			my $sum_end = $line_counter;
 			$excel_href->{sheet}->write_formula( $line_counter, 3, "{=SUM(D$sum_start:D$sum_end)}" );   #curly braces to write result to Excel
 
-			#write percentage
+			# write percentage (needed for chart)
 			my $end = $sum_end + 1;
 			foreach my $i ($sum_start .. $sum_end) {
-				say "$i";
-				$excel_href->{sheet}->write_formula( "E$i", "{=D$i/D$end}" );
+				$excel_href->{sheet}->write_formula( "E$i", "{=D$i/D$end}", $excel_href->{perc} );
 			}
+
+			# fill %plot_hash with coordinates of percentages for summary chart
+			$plot_hash{$map_name} = [$sum_start, $sum_end];
 
 			# write positive genes in green and negative in red
 			# Write a conditional format over a range.
@@ -696,6 +701,9 @@ sub collect_maps {
 	
 		}   #end local $.
 	}   # end foreach map
+
+	# create chart with all maps on it
+	_chart_all_for_collect_maps( { plot =>\%plot_hash, workbook => $excel_href->{workbook}, sheet_name => "MAPS" } );
 
 	$excel_href->{workbook}->close() or $log->logdie( "Error closing Excel file: $!" );
 
@@ -1983,6 +1991,60 @@ sub _configure_chart_for_collect_maps {
 
     return;
 }
+
+
+### INTERNAL UTILITY ###
+# Usage      : _chart_all_for_collect_maps( { plot =>\%plot_hash, workbook => $excel_href->{workbook}, sheet_name => "MAPS" } );
+# Purpose    : chart all maps on single sheet (and chart)
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : --mode=collect_maps
+sub _chart_all_for_collect_maps {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_chart_all_for_collect_maps() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+    my %plot_hash = %{ $param_href->{plot} };
+
+	# create a chart (separate sheet)
+	my $chart_genes = $param_href->{workbook}->add_chart( type => 'line', name => "Chart_all_genes", embedded => 0 );
+	my $chart_perc  = $param_href->{workbook}->add_chart( type => 'line', name => "Chart_all_perc",  embedded => 0 );
+
+	foreach my $series_name ( map { $_->[0] } sort { $a->[1] <=> $b->[1] } map { [ $_, /\A(?:\D+)(\d+)(?:.+)\z/ ] } keys %plot_hash ) {
+		my $pos_aref = $plot_hash{$series_name};
+		$chart_genes->add_series(
+			name       => "$series_name",
+		    categories => "=$param_href->{sheet_name}!A$pos_aref->[0]:A$pos_aref->[1]",
+		    values     => "=$param_href->{sheet_name}!D$pos_aref->[0]:D$pos_aref->[1]",
+			line       => { width => 3 },
+		);
+
+		$chart_perc->add_series(
+			name       => "$series_name",
+		    categories => "=$param_href->{sheet_name}!A$pos_aref->[0]:A$pos_aref->[1]",
+		    values     => "=$param_href->{sheet_name}!E$pos_aref->[0]:E$pos_aref->[1]",
+			line       => { width => 3 },
+		);
+	}
+
+	# Add a chart title and some axis labels.
+	$chart_genes->set_x_axis( name => 'Phylostrata', visible => 1, label_position => 'low', major_gridlines => { visible => 1 }, position_axis => 'between' );
+	$chart_perc->set_x_axis(  name => 'Phylostrata', visible => 1, label_position => 'low', major_gridlines => { visible => 1 }, position_axis => 'between' );
+	$chart_genes->set_y_axis( name => 'Num of genes per phylostrata', major_gridlines => { visible => 1 } );
+	$chart_perc->set_y_axis(  name => '% of genes per phylostrata', major_gridlines => { visible => 1 } );
+ 
+	# Set an Excel chart style. Colors with white outline and shadow.
+	$chart_genes->set_style( 10 );
+	$chart_perc->set_style( 10 );
+	
+	# Display data in hidden rows or columns on the chart.
+	$chart_genes->show_blanks_as( 'zero' );   #gap also possible
+	$chart_perc->show_blanks_as( 'zero' );   #gap also possible
+
+    return;
+}
+
 
 
 
