@@ -864,7 +864,7 @@ sub multi_maps {
 		my $map_tbl = _import_map($in, $map, $dbh);
 	
 		# import one term (specific part)
-		$term_tbl = _import_term($infile, $dbh, $relation);   #defined outside loop
+		$term_tbl = _import_term($infile, $dbh, $relation);
 	
 		# connect term
 		_update_term_with_map($term_tbl, $map_tbl, $dbh);
@@ -1012,6 +1012,7 @@ sub _import_term {
 	phylostrata TINYINT UNSIGNED NULL,
 	ti INT UNSIGNED NULL,
 	species_name VARCHAR(200) NULL,
+	extra MEDIUMTEXT NULL,
 	PRIMARY KEY(gene_id),
 	KEY(prot_id)
     ) }, $dbh->quote_identifier($term_tbl) );
@@ -1024,17 +1025,6 @@ sub _import_term {
 
 	# load and connect to ensembl_relation_table
 	_connect_to_relation($term_tbl, $dbh, $relation);
-
-
-	#
-	#UPDATE DMR1_map AS t
-	#INNER JOIN dr_all_plus_15_12_2015_remap AS map 
-	#ON t.gene_id = map.gene_id
-	#SET t.prot_id = map.prot_id, t.phylostrata = map.phylostrata, t.ti= map.ti, t.species_name = map.species_name;
-	##410
-	#
-	#DELETE t FROM DMR1_map AS t
-	#WHERE phylostrata IS NULL;
 
     return $term_tbl;
 }
