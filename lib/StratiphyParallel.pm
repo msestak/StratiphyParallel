@@ -2078,14 +2078,14 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
 =head1 SYNOPSIS
 
     # recommended usage (all modes can use options from config file or command line or mixed)
-	# run Phylostrat in parallel
-    StratiphyParallel.pm --mode=stratiphy_parallel
+    # run Phylostrat in parallel
+    StratiphyParallel.pm --mode=stratiphy_parallel --infile /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015 --tax_id=7227 -v -v
 
     # collect phylo summary maps
     StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
 
     # import maps and one term and calculate hypergeometric test for every term map
-	StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -v
+    StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -v
 
 
 
@@ -2096,6 +2096,7 @@ StratiphyParallel is modulino to run PhyloStrat in parallel, collect information
  --mode=mode                   Description
  --mode=stratiphy_parallel     - runs Phylostrat in parallel with fork
  --mode=collect_maps           - collects phylo summary maps
+ --mode=multi_maps             - collects maps and one term and calculates hypergeometric test
  
  For help write:
  StratiphyParallel.pm -h
@@ -2124,12 +2125,12 @@ Runs Phylostrat in parallel with fork (defined by --max_process). It requires na
  # options from config
  StratiphyParallel.pm --mode=collect_maps
 
-Collects phylo summary maps, compares them and writes them to Excel file.
+Collects phylo summary maps, compares them and writes them to Excel file. It creates chart for each map and also summary.
 
 =item multi_maps
 
  # options from command line
- StratiphyParallel.pm --mode=multi_maps --in=./data/ -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+ StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
  # options from config
  StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -v
@@ -2153,7 +2154,7 @@ Example:
  [Stratiphy]
  max_process = 12
  e_value     = 3-30
- tax_id      = 7227
+ #tax_id      = 7227
  nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
  names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
  
