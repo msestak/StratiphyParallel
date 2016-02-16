@@ -59,7 +59,7 @@ sub run {
     my @mode     = @{ $param_href->{mode} };
 
     #start logging for the rest of program (without capturing of parameters)
-    init_logging($verbose);
+    init_logging( $verbose, $param_href->{argv} );
     ##########################
     # ... in some function ...
     ##########################
@@ -134,6 +134,7 @@ sub get_parameters_from_cmd {
 	my (%cli, @mode);
 	$cli{quiet} = 0;
 	$cli{verbose} = 0;
+	$cli{argv} = \@arg_copy;
 
 	#mode, quiet and verbose can only be set on command line
     GetOptions(
@@ -242,13 +243,14 @@ sub get_parameters_from_cmd {
 # Usage      : init_logging();
 # Purpose    : enables Log::Log4perl log() to Screen and File
 # Returns    : nothing
-# Parameters : doesn't need parameters (logfile is in same directory and same name as script -pl +log
+# Parameters : verbose flag + copy of parameters from command line
 # Throws     : croaks if it receives parameters
 # Comments   : used to setup a logging framework
+#            : logfile is in same directory and same name as script -pl +log
 # See Also   : Log::Log4perl at https://metacpan.org/pod/Log::Log4perl
 sub init_logging {
-    croak 'init_logging() needs verbose parameter' unless @_ == 1;
-    my ($verbose) = @_;
+    croak 'init_logging() needs verbose parameter' unless @_ == 2;
+    my ( $verbose, $argv_copy ) = @_;
 
     #create log file in same dir where script is running
 	#removes perl script and takes absolute path from rest of path
@@ -286,22 +288,37 @@ sub init_logging {
     ###############################################################################
     # Configuration in a string ...
     my $conf = qq(
-      log4perl.category.main              = $log_level, Logfile, Screen
-     
+      log4perl.category.main                   = TRACE, Logfile, Screen
+
+	  # Filter range from TRACE up
+	  log4perl.filter.MatchTraceUp               = Log::Log4perl::Filter::LevelRange
+      log4perl.filter.MatchTraceUp.LevelMin      = TRACE
+      log4perl.filter.MatchTraceUp.LevelMax      = FATAL
+      log4perl.filter.MatchTraceUp.AcceptOnMatch = true
+
+      # Filter range from $log_level up
+      log4perl.filter.MatchLevelUp               = Log::Log4perl::Filter::LevelRange
+      log4perl.filter.MatchLevelUp.LevelMin      = $log_level
+      log4perl.filter.MatchLevelUp.LevelMax      = FATAL
+      log4perl.filter.MatchLevelUp.AcceptOnMatch = true
+      
+	  # setup of file log
       log4perl.appender.Logfile           = Log::Log4perl::Appender::File
-      log4perl.appender.Logfile.Threshold = TRACE
       log4perl.appender.Logfile.filename  = $logfile
       log4perl.appender.Logfile.mode      = append
       log4perl.appender.Logfile.autoflush = 1
       log4perl.appender.Logfile.umask     = 0022
-      log4perl.appender.Logfile.header_text = INVOCATION:$0 @ARGV
+      log4perl.appender.Logfile.header_text = INVOCATION:$0 @$argv_copy
       log4perl.appender.Logfile.layout    = Log::Log4perl::Layout::PatternLayout
       log4perl.appender.Logfile.layout.ConversionPattern = [%d{yyyy/MM/dd HH:mm:ss,SSS}]%5p> %M line:%L==>%m%n
-     
+	  log4perl.appender.Logfile.Filter    = MatchTraceUp
+      
+	  # setup of screen log
       log4perl.appender.Screen            = Log::Log4perl::Appender::ScreenColoredLevels
       log4perl.appender.Screen.stderr     = 1
       log4perl.appender.Screen.layout     = Log::Log4perl::Layout::PatternLayout
       log4perl.appender.Screen.layout.ConversionPattern  = [%d{yyyy/MM/dd HH:mm:ss,SSS}]%5p> %M line:%L==>%m%n
+	  log4perl.appender.Screen.Filter     = MatchLevelUp
     );
 
     # ... passed as a reference to init()
@@ -309,7 +326,6 @@ sub init_logging {
 
     return;
 }
-
 
 ### INTERNAL UTILITY ###
 # Usage      : my ($stdout, $stderr, $exit) = _capture_output( $cmd, $param_href );
