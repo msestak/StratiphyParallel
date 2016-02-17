@@ -13,8 +13,8 @@ nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dm
 names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
 
 [Maps]
-term_sub    = _term_prepare
-column_list = gene_id,prot_id
+term_sub_name = _term_prepare
+column_list   = gene_id,prot_id
 
 [Database]
 host     = localhost

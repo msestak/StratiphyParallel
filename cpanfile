@@ -10,6 +10,7 @@ requires 'autodie';
 requires 'Exporter';
 requires 'Carp';
 requires 'Data::Dumper';
+requires 'Data::Printer';
 requires 'Path::Tiny';
 requires 'DBI';
 requires 'DBD::mysql';

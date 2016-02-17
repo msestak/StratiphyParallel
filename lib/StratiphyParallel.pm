@@ -11,6 +11,7 @@ use Getopt::Long;
 use Pod::Usage;
 use Capture::Tiny qw/capture/;
 use Data::Dumper;
+use Data::Printer;
 #use Regexp::Debugger;
 use Log::Log4perl;
 use File::Find::Rule;
@@ -71,8 +72,8 @@ sub run {
 	#$log->trace("This is example of trace logging for $0");
 
     #get dump of param_href if -v (verbose) flag is on (for debugging)
-    my $dump_print = sprintf( Dumper($param_href) ) if $verbose;
-    $log->debug( '$param_href = ', "$dump_print" ) if $verbose;
+    my $param_print = sprintf( p($param_href) ) if $verbose;
+    $log->debug( '$param_href = ', "$param_print" ) if $verbose;
 
     #call write modes (different subs that print different jobs)
     my %dispatch = (
@@ -147,7 +148,7 @@ sub get_parameters_from_cmd {
         'out|o=s'       => \$cli{out},
         'outfile|of=s'  => \$cli{outfile},
 
-        'term_sub|ts=s' => \$cli{term_subref},
+        'term_sub_name|ts=s' => \$cli{term_sub_name},
         'column_list|cl=s' => \$cli{column_list},
 
         'relation|r=s'  => \$cli{relation},
@@ -2074,7 +2075,7 @@ sub multi_maps {
 	my $outfile     = $param_href->{outfile}     or $log->logcroak( 'no $outfile specified on command line!' );
 	my $infile      = $param_href->{infile}      or $log->logcroak( 'no $infile specified on command line!' );
 	my $column_list = $param_href->{column_list} or $log->logcroak( 'no $column_list specified on command line!' );
-	my $term_subref = $param_href->{term_subref} or $log->logcroak( 'no $term_subref specified on command line!' );
+	my $term_sub_name = $param_href->{term_sub_name} or $log->logcroak( 'no $term_sub_name specified on command line!' );
 
 	# dispatch table to import one term (specific part)
 	my %term_dispatch = (
@@ -2106,17 +2107,12 @@ sub multi_maps {
 		my $map_tbl = _import_map($in, $map, $dbh);
 	
 		# import one term (specific part)
-        if ( exists $term_dispatch{$term_subref} ) {
-            $log->info("RUNNING ACTION for term: ", $term_subref);
-
-            $term_tbl = $term_dispatch{$term_subref}->(  { infile => $infile, dbh => $dbh, column_list => $column_list } );
-
-            $log->info("TIME when finished for: $term_subref");
+        if ( exists $term_dispatch{$term_sub_name} ) {
+            $term_tbl = $term_dispatch{$term_sub_name}->(  { infile => $infile, dbh => $dbh, column_list => $column_list } );
         }
         else {
-            $log->logcroak( "Unrecognized coderef --term_subref={$term_subref} on command line thus aborting");
+            $log->logcroak( "Unrecognized coderef --term_sub_name={$term_sub_name} on command line thus aborting");
         }
-		#$term_tbl = $term_subref->( { infile => $infile, dbh => $dbh, column_list => $column_list } );
 	
 		# connect term
 		_update_term_with_map($term_tbl, $map_tbl, $dbh);
@@ -2156,7 +2152,7 @@ sub multi_maps {
 
 
 ### INTERNAL UTILITY ###
-# Usage      : $term_tbl = $term_subref->( { infile => $infile, dbh => $dbh, column_list => $column_list } );
+# Usage      : $term_tbl = $term_sub_name->( { infile => $infile, dbh => $dbh, column_list => $column_list } );
 # Purpose    : imports and prepares term table
 # Returns    : term table name
 # Parameters : ($infile, $dbh, $relation);
@@ -2234,7 +2230,7 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
     StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
 
     # import maps and one term and calculate hypergeometric test for every term map
-    StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
+    StratiphyParallel.pm --mode=multi_maps --term_sub_name=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
 
 
 
@@ -2279,12 +2275,12 @@ Collects phylo summary maps, compares them and writes them to Excel file. It cre
 =item multi_maps
 
  # options from command line
- StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+ StratiphyParallel.pm --mode=multi_maps --term_sub_name=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
  # options from config
- StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
+ StratiphyParallel.pm --mode=multi_maps --term_sub_name=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
 
-Imports multiple maps and connects them with association term, calculates hypergeometric test and writes log-odds, hypergeometric test and charts to Excel. Input file is term file, term_sub is name of subroutine that will load term table and column_list is list of columns in term file to import. Out is R working directory and outfile is final Excel file.
+Imports multiple maps and connects them with association term, calculates hypergeometric test and writes log-odds, hypergeometric test and charts to Excel. Input file is term file, term_sub_name is name of subroutine that will load term table and column_list is list of columns in term file to import. Out is R working directory and outfile is final Excel file.
 
 =back
 
@@ -2308,7 +2304,7 @@ Example:
  names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
  
  [Maps]
- term_sub    = _term_prepare
+ term_sub_name    = _term_prepare
  column_list = gene_id,prot_id
  
  [Database]

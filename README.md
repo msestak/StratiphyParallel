@@ -12,7 +12,7 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
     StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
 
     # import maps and one term and calculate hypergeometric test for every term map
-    StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
+    StratiphyParallel.pm --mode=multi_maps --term_sub_name=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
 
 # DESCRIPTION
 
@@ -52,12 +52,12 @@ StratiphyParallel is modulino to run PhyloStrat in parallel, collect information
 - multi\_maps
 
         # options from command line
-        StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+        StratiphyParallel.pm --mode=multi_maps --term_sub_name=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
         # options from config
-        StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
+        StratiphyParallel.pm --mode=multi_maps --term_sub_name=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
 
-    Imports multiple maps and connects them with association term, calculates hypergeometric test and writes log-odds, hypergeometric test and charts to Excel. Input file is term file, term\_sub is name of subroutine that will load term table and column\_list is list of columns in term file to import. Out is R working directory and outfile is final Excel file.
+    Imports multiple maps and connects them with association term, calculates hypergeometric test and writes log-odds, hypergeometric test and charts to Excel. Input file is term file, term\_sub\_name is name of subroutine that will load term table and column\_list is list of columns in term file to import. Out is R working directory and outfile is final Excel file.
 
 # CONFIGURATION
 
@@ -79,7 +79,7 @@ Example:
     names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
     
     [Maps]
-    term_sub    = _term_prepare
+    term_sub_name    = _term_prepare
     column_list = gene_id,prot_id
     
     [Database]
