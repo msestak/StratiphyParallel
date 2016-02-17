@@ -3,6 +3,7 @@ package StratiphyParallel;
 use 5.010001;
 use strict;
 use warnings;
+use Exporter 'import';
 use File::Spec::Functions qw(:ALL);
 use Path::Tiny;
 use Carp;
@@ -66,8 +67,8 @@ sub run {
     my $log = Log::Log4perl::get_logger("main");
 
     # Logs both to Screen and File appender
-    $log->info("This is start of logging for $0");
-    $log->trace("This is example of trace logging for $0");
+	#$log->info("This is start of logging for $0");
+	#$log->trace("This is example of trace logging for $0");
 
     #get dump of param_href if -v (verbose) flag is on (for debugging)
     my $dump_print = sprintf( Dumper($param_href) ) if $verbose;
@@ -140,11 +141,14 @@ sub get_parameters_from_cmd {
     GetOptions(
         'help|h'        => \$cli{help},
         'man|m'         => \$cli{man},
-		'config|cnf=s'  => \$cli{config},
+        'config|cnf=s'  => \$cli{config},
         'in|i=s'        => \$cli{in},
         'infile|if=s'   => \$cli{infile},
         'out|o=s'       => \$cli{out},
         'outfile|of=s'  => \$cli{outfile},
+
+        'term_sub|ts=s' => \$cli{term_subref},
+        'column_list|cl=s' => \$cli{column_list},
 
         'relation|r=s'  => \$cli{relation},
         'nodes|no=s'    => \$cli{nodes},
@@ -176,9 +180,9 @@ sub get_parameters_from_cmd {
 	
 	#if not -q or --quiet print all this (else be quiet)
 	if ($cli{quiet} == 0) {
-		print STDERR 'My @ARGV: {', join( "} {", @arg_copy ), '}', "\n";
+		#print STDERR 'My @ARGV: {', join( "} {", @arg_copy ), '}', "\n";
 		#no warnings 'uninitialized';
-		print STDERR "Extra options from config:", Dumper(\%opts);
+		#print STDERR "Extra options from config:", Dumper(\%opts);
 	
 		if ($cli{in}) {
 			say 'My input path: ', canonpath($cli{in});
@@ -828,7 +832,7 @@ sub _add_missing_phylostrata {
 # Throws     : croaks if wrong number of parameters
 # Comments   : writes to Excel file
 # See Also   : 
-sub multi_maps {
+sub multi_maps2 {
     my $log = Log::Log4perl::get_logger("main");
     $log->logcroak('multi_maps() needs a $param_href') unless @_ == 1;
     my ($param_href) = @_;
@@ -1116,7 +1120,7 @@ sub _load_table_into {
     LOAD DATA INFILE '$infile'
     INTO TABLE $tbl_name } . q{ FIELDS TERMINATED BY '\t'
     LINES TERMINATED BY '\n' }
-	. $column_list;
+	. '(' . $column_list . ')';
 	$log->trace("Report: $load_query");
 
 	# report number of rows inserted
@@ -2052,6 +2056,161 @@ sub _chart_all_for_collect_maps {
 }
 
 
+### INTERFACE SUB ###
+# Usage      : --mode=multi_maps
+# Purpose    : load and create maps and association maps for multiple e_values and one term
+# Returns    : nothing
+# Parameters : $param_href
+# Throws     : croaks if wrong number of parameters
+# Comments   : writes to Excel file
+# See Also   : 
+sub multi_maps {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('multi_maps() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+	my $out         = $param_href->{out}         or $log->logcroak( 'no $out specified on command line!' );
+	my $in          = $param_href->{in}          or $log->logcroak( 'no $in specified on command line!' );
+	my $outfile     = $param_href->{outfile}     or $log->logcroak( 'no $outfile specified on command line!' );
+	my $infile      = $param_href->{infile}      or $log->logcroak( 'no $infile specified on command line!' );
+	my $column_list = $param_href->{column_list} or $log->logcroak( 'no $column_list specified on command line!' );
+	my $term_subref = $param_href->{term_subref} or $log->logcroak( 'no $term_subref specified on command line!' );
+
+	# dispatch table to import one term (specific part)
+	my %term_dispatch = (
+        _term_prepare   => \&_term_prepare,              # term has prot_id column
+
+    );
+
+	# collect maps from IN
+	my $sorted_maps_aref = _sorted_files_in( $in, 'phmap_names' );
+
+	# get new handle
+    my $dbh = _dbi_connect($param_href);
+
+	# create new Excel workbook that will hold calculations
+	my ($workbook, $log_odds_sheet, $entropy_sheet, $black_bold, $red_bold) = _create_excel($outfile, $infile);
+
+	# create hash to hold all coordinates of start - end lines holding data
+	my %plot_hash;
+
+	# create hash to hold all real_log_odds and fdr_p_values for entropy analysis (information)
+	my %entropy_hash;
+	my $calc_info_href;
+
+	my $term_tbl;   # name needed outside loop
+	# foreach map create and load into database (general reusable)
+	foreach my $map (@$sorted_maps_aref) {
+
+		# import map
+		my $map_tbl = _import_map($in, $map, $dbh);
+	
+		# import one term (specific part)
+        if ( exists $term_dispatch{$term_subref} ) {
+            $log->info("RUNNING ACTION for term: ", $term_subref);
+
+            $term_tbl = $term_dispatch{$term_subref}->(  { infile => $infile, dbh => $dbh, column_list => $column_list } );
+
+            $log->info("TIME when finished for: $term_subref");
+        }
+        else {
+            $log->logcroak( "Unrecognized coderef --term_subref={$term_subref} on command line thus aborting");
+        }
+		#$term_tbl = $term_subref->( { infile => $infile, dbh => $dbh, column_list => $column_list } );
+	
+		# connect term
+		_update_term_with_map($term_tbl, $map_tbl, $dbh);
+	
+		# calculate hypergeometric test and print to Excel
+		my ($start_line, $end_line, $phylo_log_cnt_href, $real_log_odd_aref, $fdr_p_value_aref) = _hypergeometric_test( { term => $term_tbl, map => $map_tbl, sheet => $log_odds_sheet, black_bold => $black_bold, red_bold => $red_bold, %{$param_href} } );
+		say "$start_line-$end_line";
+
+		# collect all coordinates of start and end lines to hash
+		# series name is key, coordinates are value (aref)
+		$plot_hash{"${map_tbl}_x_$term_tbl"} = [$start_line, $end_line];
+
+		# collect real_log_odds and FDR_P_value for information calculation
+		$entropy_hash{"${map_tbl}_x_$term_tbl"} = [$real_log_odd_aref, $fdr_p_value_aref];
+
+		# hash ref for _calculate_information() need to persist after loop
+		$calc_info_href = $phylo_log_cnt_href;
+
+		# insert chart for each map-term combination near maps
+		_add_chart( { term => $term_tbl, map => $map_tbl, workbook => $workbook, sheet => $log_odds_sheet, sheet_name => "hyper_$term_tbl", start => $start_line, end => $end_line } );
+	
+	}   # end foreach map
+
+	# create chart with all maps on it
+	_chart_all( { plot =>\%plot_hash, workbook => $workbook, sheet_name => "hyper_$term_tbl", term => $term_tbl } );
+
+	# calculate entropy here using %entropy_hash
+	_calculate_information(  { entropy =>\%entropy_hash, phylo_cnt => $calc_info_href, workbook => $workbook, sheet => $entropy_sheet, black_bold => $black_bold, red_bold => $red_bold } );
+
+	# close the Excel file
+	$workbook->close() or $log->logdie( "Error closing Excel file: $!" );
+
+	$dbh->disconnect;
+
+    return;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : $term_tbl = $term_subref->( { infile => $infile, dbh => $dbh, column_list => $column_list } );
+# Purpose    : imports and prepares term table
+# Returns    : term table name
+# Parameters : ($infile, $dbh, $relation);
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : --mode=multi_maps
+sub _term_prepare {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_term_prepare() needs {$term_href}') unless @_ == 1;
+    my ($term_href) = @_;
+	my $dbh = $term_href->{dbh};
+
+	# get name of term table
+	my $term_tbl = path($term_href->{infile})->basename;
+	($term_tbl) = $term_tbl =~ m/\A([^\.]+)\.(.+)\z/;
+	$term_tbl   .= '_term';
+
+
+    # create term table
+    my $create_query = sprintf( qq{
+	CREATE TABLE %s (
+	id INT UNSIGNED AUTO_INCREMENT NOT NULL,
+	gene_name VARCHAR(20) NULL,
+	gene_id VARCHAR(20) NULL,
+	prot_id VARCHAR(20) NULL,
+	phylostrata TINYINT UNSIGNED NULL,
+	ti INT UNSIGNED NULL,
+	species_name VARCHAR(200) NULL,
+	extra MEDIUMTEXT NULL,
+	PRIMARY KEY(id),
+	KEY(gene_id),
+	KEY(prot_id)
+    ) }, $dbh->quote_identifier($term_tbl) );
+	_create_table( { table_name => $term_tbl, dbh => $dbh, query => $create_query } );
+	$log->trace("Report: $create_query");
+
+	# load data infile (needs column list or empty)
+	#my $column_list = '(gene_name, gene_id)';
+	_load_table_into($term_tbl, $term_href->{infile}, $dbh, $term_href->{column_list});
+
+    return $term_tbl;
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2075,7 +2234,7 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
     StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
 
     # import maps and one term and calculate hypergeometric test for every term map
-    StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -v
+	StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
 
 
 
@@ -2123,7 +2282,7 @@ Collects phylo summary maps, compares them and writes them to Excel file. It cre
  StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
  # options from config
- StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -v
+ StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
 
 Imports multiple maps and connects them with association term, calculates hypergeometric test and writes log-odds, hypergeometric test and charts to Excel. Input file is term file, relation file is used here to update term file so it can connect to map table. Out is R working directory and outfile is final Excel file.
 
