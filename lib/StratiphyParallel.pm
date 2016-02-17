@@ -2234,7 +2234,7 @@ StratiphyParallel - It's modulino to run PhyloStrat in parallel, collect informa
     StratiphyParallel.pm --mode=collect_maps --in=/home/msestak/prepare_blast/out/dr_plus/ --outfile=/home/msestak/prepare_blast/out/dr_04_02_2016.xlsx -v -v
 
     # import maps and one term and calculate hypergeometric test for every term map
-	StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
+    StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
 
 
 
@@ -2246,7 +2246,7 @@ StratiphyParallel is modulino to run PhyloStrat in parallel, collect information
  --mode=stratiphy_parallel     - runs Phylostrat in parallel with fork
  --mode=collect_maps           - collects phylo summary maps
  --mode=multi_maps             - collects maps and one term and calculates hypergeometric test
- 
+
  For help write:
  StratiphyParallel.pm -h
  StratiphyParallel.pm -m
@@ -2279,12 +2279,12 @@ Collects phylo summary maps, compares them and writes them to Excel file. It cre
 =item multi_maps
 
  # options from command line
- StratiphyParallel.pm --mode=multi_maps -i ./data/ -d dr_multi -if ./data/DMR1.txt --relation=/msestak/workdir/danio_dev_stages_phylo/in/dr_tab.tab -o ./data/ -of ./data/dr_DMR1_maps.xlsx -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+ StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -ho localhost -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
  # options from config
  StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
 
-Imports multiple maps and connects them with association term, calculates hypergeometric test and writes log-odds, hypergeometric test and charts to Excel. Input file is term file, relation file is used here to update term file so it can connect to map table. Out is R working directory and outfile is final Excel file.
+Imports multiple maps and connects them with association term, calculates hypergeometric test and writes log-odds, hypergeometric test and charts to Excel. Input file is term file, term_sub is name of subroutine that will load term table and column_list is list of columns in term file to import. Out is R working directory and outfile is final Excel file.
 
 =back
 
@@ -2308,7 +2308,8 @@ Example:
  names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
  
  [Maps]
- relation    = /msestak/workdir/danio_dev_stages_phylo/in/dr_splicvar
+ term_sub    = _term_prepare
+ column_list = gene_id,prot_id
  
  [Database]
  host     = localhost
@@ -2317,7 +2318,6 @@ Example:
  password = msandbox
  port     = 5625
  socket   = /tmp/mysql_sandbox5625.sock
-
 
 
 =head1 LICENSE
