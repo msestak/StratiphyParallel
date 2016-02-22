@@ -56,6 +56,7 @@ StratiphyParallel is modulino to run PhyloStrat in parallel, collect information
 
         # options from config
         StratiphyParallel.pm --mode=multi_maps --term_sub_name=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
+        StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_name,prot_id,extra --map_sub=_import_map_with_expr --expr_file=/msestak/workdir/dm_insitu/maps/annot_insitu.txt -i /msestak/workdir/dm_insitu/maps/ -d dm_multi -if /msestak/workdir/dm_insitu/maps/ectoderm.txt -o ./data/ -of /msestak/workdir/dm_insitu/maps/dm_ectoderm_22_02_2016.xlsx -v
 
     Imports multiple maps and connects them with association term, calculates hypergeometric test and writes log-odds, hypergeometric test and charts to Excel. Input file is term file, term\_sub\_name is name of subroutine that will load term table and column\_list is list of columns in term file to import. Out is R working directory and outfile is final Excel file.
 

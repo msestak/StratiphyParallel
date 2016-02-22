@@ -149,7 +149,9 @@ sub get_parameters_from_cmd {
         'outfile|of=s'  => \$cli{outfile},
 
         'term_sub_name|ts=s' => \$cli{term_sub_name},
-        'column_list|cl=s' => \$cli{column_list},
+        'map_sub_name|ms=s'  => \$cli{map_sub_name},
+        'expr_file=s'        => \$cli{expr_file},
+        'column_list|cl=s'   => \$cli{column_list},
 
         'relation|r=s'  => \$cli{relation},
         'nodes|no=s'    => \$cli{nodes},
@@ -826,7 +828,7 @@ sub _add_missing_phylostrata {
 
 
 ### INTERFACE SUB ###
-# Usage      : --mode=multi_maps
+# Usage      : --mode=multi_maps NOT WORKING
 # Purpose    : load and create maps and association maps for multiple e_values and one term
 # Returns    : nothing
 # Parameters : $param_href
@@ -909,7 +911,7 @@ sub multi_maps2 {
 
 
 ### INTERNAL UTILITY ###
-# Usage      : my $map_tbl = _import_map($in, $map, $dbh);
+# Usage      : my $map_tbl = _import_map( { in => $in, map_file => $map, dbh => $dbh } );
 # Purpose    : imports map with header
 # Returns    : name of map table
 # Parameters : input dir, full path to map file and database handle
@@ -918,13 +920,11 @@ sub multi_maps2 {
 # See Also   : --mode=multi_maps
 sub _import_map {
     my $log = Log::Log4perl::get_logger("main");
-    $log->logcroak('_import_map() needs {$in, $map, $dbh}') unless @_ == 3;
-    my ($in, $map, $dbh) = @_;
-
-	#my $out      = $param_href->{out}      or $log->logcroak('no $out specified on command line!');
+    $log->logcroak('_import_map() needs {$map_href}') unless @_ == 1;
+    my ($map_href) = @_;
 
 	# get name of map table
-	my $map_tbl = path($map)->basename;
+	my $map_tbl = path($map_href->{map_file})->basename;
 	($map_tbl) = $map_tbl =~ m/\A([^\.]+)\.phmap_names\z/;
 	$map_tbl   .= '_map';
 
@@ -939,17 +939,17 @@ sub _import_map {
 	KEY(phylostrata),
 	KEY(ti),
 	KEY(species_name)
-    ) }, $dbh->quote_identifier($map_tbl) );
-	_create_table( { table_name => $map_tbl, dbh => $dbh, query => $create_query } );
+    ) }, $map_href->{dbh}->quote_identifier($map_tbl) );
+	_create_table( { table_name => $map_tbl, dbh => $map_href->{dbh}, query => $create_query } );
 	$log->trace("Report: $create_query");
 
 	# create tmp filename
 	#my $temp_map = Path::Tiny->tempfile( TEMPLATE => "XXXXXXXX", SUFFIX => '.map' );
-	my $temp_map = path($in, $map_tbl);
+	my $temp_map = path($map_href->{in}, $map_tbl);
 	open (my $tmp_fh, ">", $temp_map) or $log->logdie("Error: can't open map $temp_map for writing:$!");
 
 	# need to skip header
-	open (my $map_fh, "<", $map) or $log->logdie("Error: can't open map $map for reading:$!");
+	open (my $map_fh, "<", $map_href->{map_file}) or $log->logdie("Error: can't open map $map_href->{map_file} for reading:$!");
 	while (<$map_fh>) {
 		chomp;
 	
@@ -979,7 +979,7 @@ sub _import_map {
     };
 	$log->trace("Report: $load_query");
 	my $rows;
-    eval { $rows = $dbh->do( $load_query ) };
+    eval { $rows = $map_href->{dbh}->do( $load_query ) };
 	$log->error( "Action: loading into table $map_tbl failed: $@" ) if $@;
 	$log->debug( "Action: table $map_tbl inserted $rows rows!" ) unless $@;
 
@@ -1211,6 +1211,7 @@ sub _update_term_with_map {
 	INNER JOIN %s AS map ON map.prot_id = term.prot_id
 	SET term.phylostrata = map.phylostrata, term.ti= map.ti, term.species_name = map.species_name
 	}, $dbh->quote_identifier($term_tbl), $dbh->quote_identifier($map_tbl) );
+	$log->trace("Report: $update_q");
 
 	# report number of rows updated
 	my $rows;
@@ -2076,10 +2077,18 @@ sub multi_maps {
 	my $infile      = $param_href->{infile}      or $log->logcroak( 'no $infile specified on command line!' );
 	my $column_list = $param_href->{column_list} or $log->logcroak( 'no $column_list specified on command line!' );
 	my $term_sub_name = $param_href->{term_sub_name} or $log->logcroak( 'no $term_sub_name specified on command line!' );
+	my $map_sub_name  = $param_href->{map_sub_name} or $log->logcroak( 'no $map_sub_name specified on command line!' );
 
 	# dispatch table to import one term (specific part)
 	my %term_dispatch = (
-        _term_prepare   => \&_term_prepare,              # term has prot_id column
+        _term_prepare   => \&_term_prepare,                 # term has prot_id column
+
+    );
+
+	# dispatch table to import map (specific part)
+	my %map_dispatch = (
+        _import_map           => \&_import_map,             # normal map
+        _import_map_with_expr => \&_import_map_with_expr,   # expression map
 
     );
 
@@ -2099,12 +2108,17 @@ sub multi_maps {
 	my %entropy_hash;
 	my $calc_info_href;
 
-	my $term_tbl;   # name needed outside loop
+	my ($map_tbl, $term_tbl);   # name needed outside loop
 	# foreach map create and load into database (general reusable)
 	foreach my $map (@$sorted_maps_aref) {
 
 		# import map
-		my $map_tbl = _import_map($in, $map, $dbh);
+        if ( exists $map_dispatch{$map_sub_name} ) {
+            $map_tbl = $map_dispatch{$map_sub_name}->(  { in => $in, map_file => $map, dbh => $dbh, expr_file => $param_href->{expr_file} } );
+        }
+        else {
+            $log->logcroak( "Unrecognized coderef --map_sub_name={$map_sub_name} on command line thus aborting");
+        }
 	
 		# import one term (specific part)
         if ( exists $term_dispatch{$term_sub_name} ) {
@@ -2197,7 +2211,76 @@ sub _term_prepare {
 }
 
 
+### INTERNAL UTILITY ###
+# Usage      : my $map_tbl = _import_map_with_expr( { in => $in, map_file => $map, dbh => $dbh, expr_file => $expr_file } );
+# Purpose    : imports map with header
+# Returns    : name of map table
+# Parameters : input dir, full path to map file and database handle
+# Throws     : croaks if wrong number of parameters
+# Comments   : creates temp files without header for LOAD data infile
+# See Also   : --mode=multi_maps
+sub _import_map_with_expr {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_import_map_with_expr() needs {$map_href}') unless @_ == 1;
+    my ($map_href) = @_;
 
+	my $map_tbl = _import_map( { in => $map_href->{in}, map_file => $map_href->{map_file}, dbh => $map_href->{dbh} } );
+
+	# import expression file
+	my $expr_tbl= path( $map_href->{expr_file} )->basename;
+	($expr_tbl) = $expr_tbl =~ m/\A([^\.]+)\.txt\z/;
+	my $create_expr = sprintf( qq{
+	CREATE TABLE IF NOT EXISTS %s (
+	stage TINYINT UNSIGNED NOT NULL,
+	gene_id VARCHAR(40) NULL,
+	prot_id VARCHAR(40) NOT NULL,
+	term VARCHAR(255) NOT NULL,
+	phylostrata TINYINT UNSIGNED NULL,
+	ti INT UNSIGNED NULL,
+	species_name VARCHAR(200) NULL,
+	PRIMARY KEY(prot_id, stage, term),
+	KEY(phylostrata),
+	KEY(ti),
+	KEY(species_name)
+    ) }, $map_href->{dbh}->quote_identifier($expr_tbl) );
+	_create_table( { table_name => $expr_tbl, dbh => $map_href->{dbh}, query => $create_expr } );
+	$log->trace("Report: $create_expr");
+
+	# load expression file
+    my $load_expr = qq{
+    LOAD DATA INFILE '$map_href->{expr_file}'
+    INTO TABLE $expr_tbl } . q{ FIELDS TERMINATED BY '\t'
+    LINES TERMINATED BY '\n'
+	(stage, prot_id, term)
+    };
+	$log->trace("Report: $load_expr");
+	my $rows_expr;
+	eval { $rows_expr = $map_href->{dbh}->do( $load_expr ) };
+	$log->error( "Action: loading into table $expr_tbl failed: $@" ) if $@;
+	$log->debug( "Action: table $expr_tbl inserted $rows_expr rows!" ) unless $@;
+
+	# update expression table with map
+	_update_term_with_map($expr_tbl, $map_tbl, $map_href->{dbh});
+
+	# drop map table
+	my $drop_map_q = sprintf( qq{
+		DROP TABLE IF EXISTS %s
+	}, $map_href->{dbh}->quote_identifier($map_tbl) );
+	eval { $map_href->{dbh}->do( $drop_map_q ) };
+	$log->error( "Action: drop table $map_tbl failed: $@" ) if $@;
+	$log->debug( "Action: table $map_tbl dropped!" ) unless $@;
+	
+
+	# rename expr_tbl to map_tbl
+	my $rename_q = sprintf( qq{
+		RENAME TABLE %s TO %s
+	}, $map_href->{dbh}->quote_identifier($expr_tbl), $map_href->{dbh}->quote_identifier($map_tbl) );
+	eval { $map_href->{dbh}->do( $rename_q ) };
+	$log->error( "Action: renaming table $expr_tbl into $map_tbl failed: $@" ) if $@;
+	$log->debug( "Action: table $expr_tbl renamed into $map_tbl!" ) unless $@;
+
+    return $map_tbl;
+}
 
 
 
@@ -2279,6 +2362,7 @@ Collects phylo summary maps, compares them and writes them to Excel file. It cre
 
  # options from config
  StratiphyParallel.pm --mode=multi_maps --term_sub_name=_term_prepare --column_list=gene_id,prot_id -i ./data/ -d dm_multi -if ./data/dm_oxphos.txt -o ./data/ -of ./data/dm_oxphos_17_02_2016.xlsx -v
+ StratiphyParallel.pm --mode=multi_maps --term_sub=_term_prepare --column_list=gene_name,prot_id,extra --map_sub=_import_map_with_expr --expr_file=/msestak/workdir/dm_insitu/maps/annot_insitu.txt -i /msestak/workdir/dm_insitu/maps/ -d dm_multi -if /msestak/workdir/dm_insitu/maps/ectoderm.txt -o ./data/ -of /msestak/workdir/dm_insitu/maps/dm_ectoderm_22_02_2016.xlsx -v
 
 Imports multiple maps and connects them with association term, calculates hypergeometric test and writes log-odds, hypergeometric test and charts to Excel. Input file is term file, term_sub_name is name of subroutine that will load term table and column_list is list of columns in term file to import. Out is R working directory and outfile is final Excel file.
 
