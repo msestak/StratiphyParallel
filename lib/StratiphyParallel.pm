@@ -2388,8 +2388,10 @@ Example:
  names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
  
  [Maps]
- term_sub_name    = _term_prepare
- column_list = gene_id,prot_id
+ term_sub_name = _term_prepare
+ map_sub_name  = _import_map_with_expr
+ column_list   = gebe_name,prot_id,extra
+ expr_file     = /msestak/workdir/dm_insitu/maps/annot_insitu.txt
  
  [Database]
  host     = localhost
