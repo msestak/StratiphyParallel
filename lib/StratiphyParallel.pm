@@ -121,15 +121,29 @@ sub get_parameters_from_cmd {
 
 	#read config to setup defaults
 	read_config($config_file => my %config);
-	#print 'config:', Dumper(\%config);
+	#p(%config);
+	my $config_ps_href = $config{PS};
+	#p($config_ps_href);
+	my $config_ti_href = $config{TI};
+	#p($config_ti_href);
+	my $config_psname_href = $config{PSNAME};
+
 	#push all options into one hash no matter the section
 	my %opts;
 	foreach my $key (keys %config) {
+		# don't expand PS, TI or PSNAME
+		next if ( ($key eq 'PS') or ($key eq 'TI') or ($key eq 'PSNAME') );
+		# expand all other options
 		%opts = (%opts, %{ $config{$key} });
 	}
+
 	# put config location to %opts
 	$opts{config} = $config_file;
-	#say 'opts:', Dumper(\%opts);
+
+	# put PS and TI section to %opts
+	$opts{ps} = $config_ps_href;
+	$opts{ti} = $config_ti_href;
+	$opts{psname} = $config_psname_href;
 
 	#cli part
 	my @arg_copy = @ARGV;
@@ -911,7 +925,7 @@ sub multi_maps2 {
 
 
 ### INTERNAL UTILITY ###
-# Usage      : my $map_tbl = _import_map( { in => $in, map_file => $map, dbh => $dbh } );
+# Usage      : my $map_tbl = _import_map( { map_file => $map, dbh => $dbh, %{$param_href} } );
 # Purpose    : imports map with header
 # Returns    : name of map table
 # Parameters : input dir, full path to map file and database handle
@@ -957,15 +971,35 @@ sub _import_map {
 		next if !/\A(?:[^\t]+)\t(?:[^\t]+)\t(?:[^\t]+)\t(?:[^\t]+)\z/;
 	
 		my ($prot_id, $ps, $ti, $ps_name) = split "\t", $_;
-		my (undef, $real_ps_name) = split ' : ', $ps_name;
-		#say $real_ps_name;
-		# print to tmp map file
-		say {$tmp_fh} "$prot_id\t$ps\t$ti\t$real_ps_name";
+		my (undef, $psname_short) = split ' : ', $ps_name;
 
-		say "undefined $prot_id" if (! defined $prot_id);
-		say "undefined $ps" if (! defined $ps);
-		say "undefined $ti" if (! defined $ti);
-		say "undefined $real_ps_name" if (! defined $real_ps_name);
+		# update map with new phylostrata (shorter phylogeny)
+		my $ps_new;
+		if ( exists $map_href->{ps}->{$ps} ) {
+			$ps_new = $map_href->{ps}->{$ps};
+			#say "LINE:$.\tPS_INFILE:$ps\tPS_NEW:$ps_new";
+			$ps = $ps_new;
+		}
+
+		# update map with new tax_id (shorter phylogeny)
+		my $ti_new;
+		if ( exists $map_href->{ti}->{$ti} ) {
+			$ti_new = $map_href->{ti}->{$ti};
+			#say "LINE:$.\tTI_INFILE:$ti\tTI_NEW:$ti_new";
+			$ti = $ti_new;
+		}
+
+		# update map with new phylostrata name (shorter phylogeny)
+		my $psname_new;
+		if ( exists $map_href->{psname}->{$psname_short} ) {
+			$psname_new = $map_href->{psname}->{$psname_short};
+			#say "LINE:$.\tPS_REAL_NAME:$psname_short\tPSNAME_NEW:$psname_new";
+			$psname_short = $psname_new;
+		}
+
+		# print to tmp map file
+		say {$tmp_fh} "$prot_id\t$ps\t$ti\t$psname_short";
+
 	}   # end while
 
 	# explicit close needed else it can break
@@ -2114,7 +2148,7 @@ sub multi_maps {
 
 		# import map
         if ( exists $map_dispatch{$map_sub_name} ) {
-            $map_tbl = $map_dispatch{$map_sub_name}->(  { in => $in, map_file => $map, dbh => $dbh, expr_file => $param_href->{expr_file} } );
+            $map_tbl = $map_dispatch{$map_sub_name}->(  { map_file => $map, dbh => $dbh, %{$param_href} } );
         }
         else {
             $log->logcroak( "Unrecognized coderef --map_sub_name={$map_sub_name} on command line thus aborting");
@@ -2212,7 +2246,7 @@ sub _term_prepare {
 
 
 ### INTERNAL UTILITY ###
-# Usage      : my $map_tbl = _import_map_with_expr( { in => $in, map_file => $map, dbh => $dbh, expr_file => $expr_file } );
+# Usage      : my $map_tbl = _import_map_with_expr( { map_file => $map, dbh => $dbh, %{$param_href} } );
 # Purpose    : imports map with header
 # Returns    : name of map table
 # Parameters : input dir, full path to map file and database handle
@@ -2224,7 +2258,7 @@ sub _import_map_with_expr {
     $log->logcroak('_import_map_with_expr() needs {$map_href}') unless @_ == 1;
     my ($map_href) = @_;
 
-	my $map_tbl = _import_map( { in => $map_href->{in}, map_file => $map_href->{map_file}, dbh => $map_href->{dbh} } );
+	my $map_tbl = _import_map( $map_href );
 
 	# import expression file
 	my $expr_tbl= path( $map_href->{expr_file} )->basename;
@@ -2390,7 +2424,7 @@ Example:
  [Maps]
  term_sub_name = _term_prepare
  map_sub_name  = _import_map_with_expr
- column_list   = gebe_name,prot_id,extra
+ column_list   = gene_name,prot_id,extra
  expr_file     = /msestak/workdir/dm_insitu/maps/annot_insitu.txt
  
  [Database]
@@ -2400,6 +2434,153 @@ Example:
  password = msandbox
  port     = 5625
  socket   = /tmp/mysql_sandbox5625.sock
+ 
+ [PS]
+ 1   =  1
+ 2   =  2
+ 3   =  2
+ 4   =  2
+ 5   =  3
+ 6   =  3
+ 7   =  3
+ 8   =  3
+ 9   =  4
+ 10  =  5
+ 11  =  5
+ 12  =  6
+ 13  =  7
+ 14  =  7
+ 15  =  7
+ 16  =  8
+ 17  =  8
+ 18  =  9
+ 19  =  9
+ 20  =  10
+ 21  =  10
+ 22  =  10
+ 23  =  10
+ 24  =  10
+ 25  =  10
+ 26  =  10
+ 27  =  10
+ 28  =  11
+ 29  =  11
+ 30  =  11
+ 31  =  11
+ 32  =  11
+ 33  =  11
+ 34  =  11
+ 35  =  11
+ 36  =  11
+ 37  =  11
+ 38  =  11
+ 39  =  11
+ 40  =  11
+ 41  =  11
+ 42  =  11
+ 43  =  11
+ 44  =  11
+ 45  =  11
+ 46  =  11
+ 47  =  12
+ 
+ [TI]
+ 131567   =  131567
+ 2759     =  2759
+ 1708629  =  2759
+ 1708631  =  2759
+ 33154    =  33154
+ 1708671  =  33154
+ 1708672  =  33154
+ 1708673  =  33154
+ 33208    =  33208
+ 6072     =  6072
+ 1708696  =  6072
+ 33213    =  33213
+ 33317    =  33317
+ 1206794  =  33317
+ 88770    =  33317
+ 6656     =  6656
+ 197563   =  6656
+ 197562   =  197562
+ 6960     =  197562
+ 50557    =  50557
+ 85512    =  50557
+ 7496     =  50557
+ 33340    =  50557
+ 1708734  =  50557
+ 33392    =  50557
+ 1708735  =  50557
+ 1708736  =  50557
+ 7147     =  7147
+ 7203     =  7147
+ 43733    =  7147
+ 480118   =  7147
+ 480117   =  7147
+ 43738    =  7147
+ 43741    =  7147
+ 43746    =  7147
+ 7214     =  7147
+ 43845    =  7147
+ 46877    =  7147
+ 46879    =  7147
+ 186285   =  7147
+ 7215     =  7147
+ 32341    =  7147
+ 1708740  =  7147
+ 32346    =  7147
+ 32351    =  7147
+ 1708742  =  7147
+ 7227     =  7227
+ 
+ [PSNAME]
+ cellular_organisms  =  cellular_organisms
+ Eukaryota           =  Eukaryota
+ Unikonta            =  Eukaryota
+ Apusozoa/Opisthokonta  =  Eukaryota
+ Opisthokonta        =  Opisthokonta
+ Holozoa             =  Opisthokonta
+ Filozoa             =  Opisthokonta
+ Metazoa/Choanoflagellida  =  Opisthokonta
+ Metazoa             =  Metazoa
+ Eumetazoa           =  Eumetazoa
+ Cnidaria/Bilateria  =  Eumetazoa
+ Bilateria           =  Bilateria
+ Protostomia         =  Protostomia
+ Ecdysozoa           =  Protostomia
+ Panarthropoda       =  Protostomia
+ Arthropoda          =  Arthropoda
+ Mandibulata         =  Arthropoda
+ Pancrustacea        =  Pancrustacea
+ Hexapoda            =  Pancrustacea
+ Insecta             =  Insecta
+ Dicondylia          =  Insecta
+ Pterygota           =  Insecta
+ Neoptera            =  Insecta
+ Phthiraptera/Endopterygota  =  Insecta
+ Endopterygota       =  Insecta
+ Coleoptera/Amphiesmenoptera/Diptera  =  Insecta
+ Amphiesmenoptera/Diptera  =  Insecta
+ Diptera             =  Diptera
+ Brachycera          =  Diptera
+ Muscomorpha         =  Diptera
+ Eremoneura          =  Diptera
+ Cyclorrhapha        =  Diptera
+ Schizophora         =  Diptera
+ Acalyptratae        =  Diptera
+ Ephydroidea         =  Diptera
+ Drosophilidae       =  Diptera
+ Drosophilinae       =  Diptera
+ Drosophilini        =  Diptera
+ Drosophilina        =  Diptera
+ Drosophiliti        =  Diptera
+ Drosophila          =  Diptera
+ Sophophora          =  Diptera
+ melanogaster_group/obscura_group  =  Diptera
+ melanogaster_group  =  Diptera
+ melanogaster_subgroup  =  Diptera
+ melanogaster/simulans/sechellia  =  Diptera
+ Drosophila_melanogaster  =  Drosophila_melanogaster
 
 
 =head1 LICENSE
