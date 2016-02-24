@@ -971,7 +971,15 @@ sub _import_map {
 		next if !/\A(?:[^\t]+)\t(?:[^\t]+)\t(?:[^\t]+)\t(?:[^\t]+)\z/;
 	
 		my ($prot_id, $ps, $ti, $ps_name) = split "\t", $_;
-		my (undef, $psname_short) = split ' : ', $ps_name;
+
+		# this is needed because psname can be short without {cellular_organisms : Eukaryota}
+		my $psname_short;
+		if ($ps_name =~ /:/) {
+			(undef, $psname_short) = split ' : ', $ps_name;
+		}
+		else {
+			$psname_short = $ps_name;
+		}
 
 		# update map with new phylostrata (shorter phylogeny)
 		my $ps_new;
@@ -1884,13 +1892,15 @@ sub _calculate_information {
 		my $up = $phylo_log_cnt_copy{$ps}->[0];
 		my $zero = $phylo_log_cnt_copy{$ps}->[1];
 		my $down = $phylo_log_cnt_copy{$ps}->[2];
+		my $map_num = ($up + $zero + $down);
 		$param_href->{sheet}->write( "A$line_cnt", $ps );
 		$param_href->{sheet}->write( "B$line_cnt", $up );
 		$param_href->{sheet}->write( "C$line_cnt", $zero );
 		$param_href->{sheet}->write( "D$line_cnt", $down );
-		my $ratio = $up/$phylostrata * log2($up/$phylostrata)
-		  + $zero/$phylostrata * log2($zero/$phylostrata)
-		  + $down/$phylostrata * log2($down/$phylostrata);
+		my $ratio =
+		  - $up/$map_num   * log3($up/$map_num)
+		  - $zero/$map_num * log3($zero/$map_num)
+		  - $down/$map_num * log3($down/$map_num);
 		$param_href->{sheet}->write( "E$line_cnt", $ratio );
 		$ratio_sum += $ratio;
 		$line_cnt++;
@@ -1900,17 +1910,24 @@ sub _calculate_information {
 
 	# calculate real information
 	$line_cnt++;
-	my $information = $phylostrata + $ratio_sum;
+	my $information = $phylostrata - $ratio_sum;
 	$param_href->{sheet}->write( "D$line_cnt", "Information", $param_href->{black_bold} );
 	$param_href->{sheet}->write( "E$line_cnt", $information,  $param_href->{black_bold} );
 
-	# calculate relative information
+	# calculate relative information po bazi 3
 	$line_cnt++;
 	my $information_rel = $information/$phylostrata;
 	$param_href->{sheet}->write( "D$line_cnt", "Info_rel",        $param_href->{red_bold} );
 	# Add a Format (percentage)
     my $format_perc = $param_href->{workbook}->add_format(); $format_perc->set_num_format( '[Red]0.00%;[Red]-0.00%;0.00%' ); $format_perc->set_bold();
 	$param_href->{sheet}->write( "E$line_cnt", $information_rel,  $format_perc );
+
+	# calculate relative information u bitovima
+	$line_cnt++;
+	my $information_rel_bit = log2($information_rel * 100);
+	$param_href->{sheet}->write( "D$line_cnt", "Info_in_bit",        $param_href->{red_bold} );
+	$param_href->{sheet}->write( "E$line_cnt", $information_rel_bit, $param_href->{black_bold} );
+
 
     return;
 }
@@ -1930,6 +1947,23 @@ sub log2 {
 		return 0;
 	}
     return log($n)/log(2);
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : log3($zero/$phylostrata)
+# Purpose    : calculates log po bazi 3
+# Returns    : log po bazi 3
+# Parameters : number
+# Throws     : croaks if wrong number of parameters
+# Comments   : returns zero if number it calculates is zero
+# See Also   : 
+sub log3 {
+	my $n = shift;
+	if ($n == 0) {
+		return 0;
+	}
+    return log($n)/log(3);
 }
 
 
