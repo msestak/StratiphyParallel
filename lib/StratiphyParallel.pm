@@ -1392,6 +1392,9 @@ HYPER
     FDR_p_value = dataset_sorted$raw_p_value* max(dataset$phylostrata)/dataset_sorted$niz
     dataset_sorted = cbind.data.frame(dataset_sorted, FDR_p_value)
     dataset_sorted$for_map_p_value = ifelse (dataset_sorted$FDR_p_value < 0.001, "<0.001", ifelse(dataset_sorted$FDR_p_value < 0.01, "<0.01", ifelse(dataset_sorted$FDR_p_value < 0.05, "<0.05", "ns")))
+    Bonferroni_p_value = dataset_sorted$raw_p_value* max(dataset$phylostrata)
+    dataset_sorted = cbind.data.frame(dataset_sorted, Bonferroni_p_value)
+    dataset_sorted$for_map_p_value_bon = ifelse (dataset_sorted$Bonferroni_p_value < 0.001, "<0.001", ifelse(dataset_sorted$Bonferroni_p_value < 0.01, "<0.01", ifelse(dataset_sorted$Bonferroni_p_value < 0.05, "<0.05", "ns")))
 FDR
     my $fdr_exec = $R->run($cmds_fdr);
 	$log->trace('FDR calculated in R');
@@ -1408,6 +1411,8 @@ FDR
             niz             => $R->get('dataset_sorted$niz'),
             fdr_p_value     => $R->get('dataset_sorted$FDR_p_value'),
             for_map_p_value => $R->get('dataset_sorted$for_map_p_value'),
+            bon_p_value     => $R->get('dataset_sorted$Bonferroni_p_value'),
+            for_map_pv_bon  => $R->get('dataset_sorted$for_map_p_value_bon'),
         });
 }
 
@@ -1453,6 +1458,8 @@ sub _hypergeometric_test {
     $log_odds_sheet->write( $line_counter, 14, 'Order',                                          $param_href->{black_bold} );
     $log_odds_sheet->write( $line_counter, 15, 'FDR P_value',                                    $param_href->{black_bold} );
     $log_odds_sheet->write( $line_counter, 16, 'for map P_value',                                $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 17, 'Bonferroni P_value',                             $param_href->{black_bold} );
+    $log_odds_sheet->write( $line_counter, 18, 'for map Pv Bonferroni',                          $param_href->{black_bold} );
 
     #double increment needed because of difference between absolute notation starting at 0
     #and relative notation starting at 1 (0,0 == A1)
@@ -1505,6 +1512,8 @@ sub _hypergeometric_test {
     $log_odds_sheet->write_col( "O$line_counter", $exit_href->{niz} );
     $log_odds_sheet->write_col( "P$line_counter", $exit_href->{fdr_p_value} );
     $log_odds_sheet->write_col( "Q$line_counter", $exit_href->{for_map_p_value} );
+    $log_odds_sheet->write_col( "R$line_counter", $exit_href->{bon_p_value} );
+    $log_odds_sheet->write_col( "S$line_counter", $exit_href->{for_map_pv_bon} );
 
     #increment for number of phylostrata to make space for next map (file)
     $line_counter += $phylostrata + 2;
@@ -1695,7 +1704,7 @@ sub _add_chart {
 	}
 
 	# Insert the chart into the a worksheet. (second one will be printed on separate sheet automatically)
-	$param_href->{sheet}->insert_chart( "S$param_href->{start}", $chart_emb, 0, 0, 1.5, 1.5 );   #scale by 150%
+	$param_href->{sheet}->insert_chart( "U$param_href->{start}", $chart_emb, 0, 0, 1.5, 1.5 );   #scale by 150%
 
     return;
 }
