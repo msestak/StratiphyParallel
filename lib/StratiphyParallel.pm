@@ -1704,7 +1704,7 @@ sub _add_chart {
 	}
 
 	# Insert the chart into the a worksheet. (second one will be printed on separate sheet automatically)
-	$param_href->{sheet}->insert_chart( "U$param_href->{start}", $chart_emb, 0, 0, 1.5, 1.5 );   #scale by 150%
+	$param_href->{sheet}->insert_chart( "U$param_href->{start}", $chart_emb, 0, 0, 1.0, 1.0 );   #scale by 100%
 
     return;
 }

@@ -1,32 +1,3 @@
-[General]
-#best to specify on command line because it changes
-#in          = /home/msestak/prepare_blast/out/dr_plus/
-#out         = .
-#infile      = /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015
-#outfile     = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
-
-[Stratiphy]
-max_process = 12
-e_value     = 3-30
-#tax_id      = 7227
-nodes       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync
-names       = /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/names.dmp.fmt.new
-
-[Maps]
-term_sub_name = _term_prepare
-map_sub_name  = _import_map_with_expr
-column_list   = gene_name,prot_id,extra
-expr_file     = /msestak/workdir/dm_insitu/maps/annot_insitu.txt
-
-[Database]
-host     = localhost
-database = pharyngula
-user     = msandbox
-password = msandbox
-port     = 5625
-socket   = /tmp/mysql_sandbox5625.sock
-
-
 [PS]
 1   =  1
 2   =  2
